@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 
-import { APP_NAMES, HEALTH_STATUS } from '../../../../libs/domain/src';
+import { APP_NAMES, HEALTH_STATUS } from '@app/domain';
 
 @Controller('health')
 export class HealthController {

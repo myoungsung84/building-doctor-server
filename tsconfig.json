@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    "types": ["node"],
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
@@ -10,20 +11,22 @@
     "lib": ["ES2022"],
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
-    "moduleResolution": "node",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitOverride": true,
     "resolveJsonModule": true,
     "paths": {
-      "@app/config": ["libs/config/src"],
-      "@app/db": ["libs/db/src"],
-      "@app/logger": ["libs/logger/src"],
-      "@app/domain": ["libs/domain/src"]
+      "@app/config": ["./libs/config/src"],
+      "@app/config/*": ["./libs/config/src/*"],
+      "@app/db": ["./libs/db/src"],
+      "@app/db/*": ["./libs/db/src/*"],
+      "@app/logger": ["./libs/logger/src"],
+      "@app/logger/*": ["./libs/logger/src/*"],
+      "@app/domain": ["./libs/domain/src"],
+      "@app/domain/*": ["./libs/domain/src/*"]
     }
   },
   "include": ["apps/**/*.ts", "libs/**/*.ts"],

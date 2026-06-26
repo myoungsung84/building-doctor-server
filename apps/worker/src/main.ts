@@ -2,8 +2,8 @@ import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
 
-import { APP_NAMES } from '../../../libs/domain/src';
-import { AppLoggerService } from '../../../libs/logger/src';
+import { APP_NAMES } from '@app/domain';
+import { AppLoggerService } from '@app/logger';
 import { WorkerAppModule } from './modules/worker-app.module';
 
 async function bootstrap(): Promise<void> {

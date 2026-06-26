@@ -2,7 +2,7 @@ import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
 
-import { AppConfigService } from '../../../libs/config/src';
+import { AppConfigService } from '@app/config';
 import { ApiAppModule } from './modules/api-app.module';
 
 async function bootstrap(): Promise<void> {
