@@ -1,0 +1,33 @@
+{
+  "name": "building-doctor-server",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "start:dev:api": "nest start api --watch",
+    "start:worker": "nest start worker",
+    "build": "tsc -p apps/api/tsconfig.app.json && tsc -p apps/worker/tsconfig.app.json",
+    "lint": "eslint \"{apps,libs}/**/*.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "format": "prettier --write \"{apps,libs}/**/*.ts\" \"*.{json,md,mjs,yaml,yml}\"",
+    "format:check": "prettier --check \"{apps,libs}/**/*.ts\" \"*.{json,md,mjs,yaml,yml}\""
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.8",
+    "@nestjs/core": "^11.1.8",
+    "@nestjs/platform-express": "^11.1.8",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.1",
+    "@nestjs/cli": "^11.0.10",
+    "@types/node": "^22.16.5",
+    "eslint": "^9.30.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.1"
+  }
+}
