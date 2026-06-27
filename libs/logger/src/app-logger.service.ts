@@ -8,6 +8,12 @@ export class AppLoggerService {
     logger.log(message);
   }
 
+  warn(message: string, context?: string): void {
+    const logger = context ? new Logger(context) : new Logger(AppLoggerService.name);
+
+    logger.warn(message);
+  }
+
   error(message: string, trace?: string, context?: string): void {
     const logger = context ? new Logger(context) : new Logger(AppLoggerService.name);
 

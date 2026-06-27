@@ -21,4 +21,21 @@ export class AppConfigService {
 
     return databaseUrl;
   }
+
+  get molitServiceKey(): string {
+    const serviceKey = process.env.MOLIT_SERVICE_KEY;
+
+    if (!serviceKey) {
+      throw new Error('MOLIT_SERVICE_KEY is required');
+    }
+
+    return serviceKey;
+  }
+
+  get molitNrgTradeApiBaseUrl(): string {
+    return (
+      process.env.MOLIT_NRG_TRADE_API_BASE_URL ??
+      'https://apis.data.go.kr/1613000/RTMSDataSvcNrgTrade/getRTMSDataSvcNrgTrade'
+    );
+  }
 }
