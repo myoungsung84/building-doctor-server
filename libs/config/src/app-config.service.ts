@@ -6,6 +6,16 @@ export class AppConfigService {
     return process.env.NODE_ENV ?? 'development';
   }
 
+  get allowedOrigins(): string[] {
+    const defaults = this.nodeEnv === 'production' ? [] : ['http://localhost:3000'];
+    const configuredOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+    return [...new Set([...defaults, ...configuredOrigins])];
+  }
+
   get port(): number {
     const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
 

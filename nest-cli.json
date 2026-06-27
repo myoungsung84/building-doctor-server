@@ -23,6 +23,12 @@
       "entryFile": "index",
       "sourceRoot": "libs/config/src"
     },
+    "api-lib": {
+      "type": "library",
+      "root": "libs/api",
+      "entryFile": "index",
+      "sourceRoot": "libs/api/src"
+    },
     "db": {
       "type": "library",
       "root": "libs/db",

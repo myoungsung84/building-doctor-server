@@ -19,6 +19,8 @@
     "noImplicitOverride": true,
     "resolveJsonModule": true,
     "paths": {
+      "@app/api": ["./libs/api/src"],
+      "@app/api/*": ["./libs/api/src/*"],
       "@app/config": ["./libs/config/src"],
       "@app/config/*": ["./libs/config/src/*"],
       "@app/db": ["./libs/db/src"],

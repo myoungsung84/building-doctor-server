@@ -1,8 +1,10 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 
 import { DbService } from '@app/db';
 import { APP_NAMES, HEALTH_STATUS } from '@app/domain';
 
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   constructor(private readonly dbService: DbService) {}
