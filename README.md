@@ -42,6 +42,9 @@ pnpm format:check
 
 ## 환경변수
 
+로컬 실행 전 루트 `.env` 파일에 `DATABASE_URL`을 설정해야 한다.
+앱 시작 시 `dotenv`를 통해 루트 `.env`를 로드한다.
+
 ```bash
 API_PORT=3001
 DATABASE_URL=postgresql://building_doctor_app:change-me@192.168.0.38:5432/building_doctor
