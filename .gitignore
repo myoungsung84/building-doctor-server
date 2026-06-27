@@ -5,6 +5,7 @@ coverage
 .turbo
 .next
 .cache
+.pnpm-store
 
 .env
 .env.*

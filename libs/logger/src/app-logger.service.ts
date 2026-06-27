@@ -7,4 +7,10 @@ export class AppLoggerService {
 
     logger.log(message);
   }
+
+  error(message: string, trace?: string, context?: string): void {
+    const logger = context ? new Logger(context) : new Logger(AppLoggerService.name);
+
+    logger.error(message, trace);
+  }
 }

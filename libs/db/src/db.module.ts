@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 
-import { DbPlaceholderService } from './db-placeholder.service';
+import { ConfigModule } from '@app/config';
+import { drizzleProviders } from './drizzle.provider';
+import { DbService } from './db.service';
 
 @Module({
-  providers: [DbPlaceholderService],
-  exports: [DbPlaceholderService],
+  imports: [ConfigModule],
+  providers: [...drizzleProviders, DbService],
+  exports: [DbService, ...drizzleProviders],
 })
 export class DbModule {}
