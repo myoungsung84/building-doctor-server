@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write \"{apps,libs}/**/*.ts\" \"*.{json,md,mjs,yaml,yml}\"",
     "format:check": "prettier --check \"{apps,libs}/**/*.ts\" \"*.{json,md,mjs,yaml,yml}\"",
+    "sync:commercial:range": "tsx apps/worker/src/commands/sync-nrg.ts",
+    "sync:commercial:region": "tsx apps/worker/src/commands/sync-nrg-region.ts",
     "worker:sync:nrg": "tsx apps/worker/src/commands/sync-nrg.ts",
+    "worker:sync:nrg:region": "tsx apps/worker/src/commands/sync-nrg-region.ts",
     "worker:geocode:pending": "tsx apps/worker/src/commands/geocode-pending.ts"
   },
   "dependencies": {

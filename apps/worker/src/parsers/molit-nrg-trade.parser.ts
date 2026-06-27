@@ -60,6 +60,7 @@ export type NonResidentialTradeUpsertInput = {
 };
 
 type NormalizeTradeItemOptions = {
+  addressPrefix?: string;
   dealYmd: string;
   lawdCd: string;
   rawItem: MolitRawTradeItem;
@@ -107,6 +108,14 @@ function normalizeString(value: string | null | undefined): string | null {
   const trimmed = value.trim();
 
   return trimmed === '' ? null : trimmed;
+}
+
+function buildGeocodingQuery(parts: Array<string | null | undefined>): string | null {
+  const values = parts
+    .map((value) => normalizeString(value))
+    .filter((value): value is string => value !== null);
+
+  return values.length > 0 ? values.join(' ') : null;
 }
 
 function parseInteger(
@@ -260,7 +269,10 @@ export function normalizeMolitTradeItem(
   const shareDealingType = normalized.shareDealingType;
   const isCanceled = cdealType === 'O' || canceledAt !== null;
   const isShareDeal = shareDealingType === '지분';
-  const geocodingQuery = !isJibunMasked && jibun ? `서울특별시 ${sggNm} ${umdNm} ${jibun}` : null;
+  const geocodingQuery =
+    !isJibunMasked && jibun
+      ? buildGeocodingQuery([options.addressPrefix ?? '서울특별시', sggNm, umdNm, jibun])
+      : null;
   const geocodingStatus = isJibunMasked ? 'skipped' : 'pending';
   const geocodingUpdatedAt = isJibunMasked ? new Date().toISOString() : null;
 

@@ -9,6 +9,7 @@ import {
 import { NonResidentialTradesRepository } from '../repositories/non-residential-trades.repository';
 
 export type SyncNrgTradesJobOptions = {
+  addressPrefix?: string;
   dealYmds: string[];
   lawdCd: string;
 };
@@ -45,7 +46,7 @@ export class SyncNrgTradesJob {
     const months: SyncNrgTradesMonthSummary[] = [];
 
     for (const dealYmd of options.dealYmds) {
-      months.push(await this.syncMonth(options.lawdCd, dealYmd));
+      months.push(await this.syncMonth(options, dealYmd));
     }
 
     return {
@@ -57,8 +58,12 @@ export class SyncNrgTradesJob {
     };
   }
 
-  private async syncMonth(lawdCd: string, dealYmd: string): Promise<SyncNrgTradesMonthSummary> {
+  private async syncMonth(
+    options: SyncNrgTradesJobOptions,
+    dealYmd: string,
+  ): Promise<SyncNrgTradesMonthSummary> {
     const context = 'SyncNrgTradesJob';
+    const lawdCd = options.lawdCd;
     const pageSize = 100;
     let currentPage = 1;
     let totalPages = 1;
@@ -91,6 +96,7 @@ export class SyncNrgTradesJob {
       for (const item of parsed.items) {
         try {
           const normalized = normalizeMolitTradeItem({
+            addressPrefix: options.addressPrefix,
             dealYmd,
             lawdCd,
             rawItem: item,
