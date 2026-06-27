@@ -11,7 +11,7 @@ import {
   endOfYearMonth,
   roundTo,
   startOfYearMonth,
-} from './public.utils';
+} from '../shared/public.utils';
 
 type NearbyMarkerItem = {
   addressLabel: string;

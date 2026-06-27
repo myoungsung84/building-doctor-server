@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { ApiException } from '@app/api';
 import { AppConfigService } from '@app/config';
 import { GeocodeRepository } from './geocode.repository';
-import { normalizeGeocodingQuery } from './public.utils';
+import { normalizeGeocodingQuery } from '../shared/public.utils';
 import { VWorldGeocodingClient } from './vworld-geocoding.client';
 
 function extractRefinedText(rawResponse: unknown): string | null {

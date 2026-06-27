@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { booleanQuerySchema, yyyymmSchema } from './schema-helpers';
+import { booleanQuerySchema, yyyymmSchema } from '../../shared/schema-helpers';
 
 const allowedRadiusMeters = [500, 1000, 2000, 3000] as const;
 

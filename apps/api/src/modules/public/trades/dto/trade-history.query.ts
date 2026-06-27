@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { booleanQuerySchema } from './schema-helpers';
+import { booleanQuerySchema } from '../../shared/schema-helpers';
 
 export const tradeHistoryQuerySchema = z.object({
   excludeShareDeals: booleanQuerySchema.default(false),
