@@ -1,13 +1,14 @@
 node_modules
 dist
 coverage
+.nyc_output
 .turbo
 .next
 .cache
 
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 npm-debug.log*
 yarn-debug.log*
@@ -15,10 +16,9 @@ yarn-error.log*
 pnpm-debug.log*
 
 .DS_Store
+._*
 Thumbs.db
 
 *.tsbuildinfo
 
-backups/*.dump
-backups/*.sql
-backups/*.sql.gz
+backups
