@@ -38,4 +38,14 @@ export class AppConfigService {
       'https://apis.data.go.kr/1613000/RTMSDataSvcNrgTrade/getRTMSDataSvcNrgTrade'
     );
   }
+
+  get vworldApiKey(): string {
+    const apiKey = process.env.VWORLD_API_KEY;
+
+    if (!apiKey) {
+      throw new Error('VWORLD_API_KEY is required');
+    }
+
+    return apiKey;
+  }
 }

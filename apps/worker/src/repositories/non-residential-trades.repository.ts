@@ -10,6 +10,57 @@ export type UpsertTradeResult = {
   inserted: boolean;
 };
 
+export type PendingGeocodingTrade = {
+  geocodingQuery: string;
+  id: string;
+};
+
+export type GeocodingCacheRecord = {
+  errorMessage: string | null;
+  id: string;
+  lat: number | null;
+  lng: number | null;
+  normalizedQuery: string;
+  provider: string;
+  query: string;
+  rawResponse: unknown;
+  status: 'failed' | 'success';
+};
+
+type PendingGeocodingTradeRow = {
+  geocodingQuery: string;
+  id: string;
+};
+
+type GeocodingCacheRow = {
+  errorMessage: string | null;
+  id: string;
+  lat: string | null;
+  lng: string | null;
+  normalizedQuery: string;
+  provider: string;
+  query: string;
+  rawResponse: unknown;
+  status: 'failed' | 'success';
+};
+
+type UpsertGeocodingCacheSuccessInput = {
+  lat: number;
+  lng: number;
+  normalizedQuery: string;
+  provider: string;
+  query: string;
+  rawResponse: unknown;
+};
+
+type UpsertGeocodingCacheFailureInput = {
+  errorMessage: string;
+  normalizedQuery: string;
+  provider: string;
+  query: string;
+  rawResponse: unknown;
+};
+
 export class NonResidentialTradesRepository {
   constructor(private readonly client: PoolClient) {}
 
@@ -206,5 +257,234 @@ export class NonResidentialTradesRepository {
     return {
       inserted: result.rows[0]?.inserted === true,
     };
+  }
+
+  async findPendingGeocodingTrades(limit: number): Promise<PendingGeocodingTrade[]> {
+    const result = await this.client.query<PendingGeocodingTradeRow>(
+      `
+        SELECT
+          id::text AS id,
+          geocoding_query AS "geocodingQuery"
+        FROM non_residential_trades
+        WHERE needs_geocoding = true
+          AND geocoding_status = 'pending'
+          AND is_jibun_masked = false
+          AND geocoding_query IS NOT NULL
+        ORDER BY id
+        LIMIT $1
+      `,
+      [limit],
+    );
+
+    return result.rows;
+  }
+
+  async findGeocodingCacheByNormalizedQuery(
+    normalizedQuery: string,
+  ): Promise<GeocodingCacheRecord | null> {
+    const result = await this.client.query<GeocodingCacheRow>(
+      `
+        SELECT
+          id::text AS id,
+          query,
+          normalized_query AS "normalizedQuery",
+          provider,
+          status,
+          lat::text AS lat,
+          lng::text AS lng,
+          raw_response AS "rawResponse",
+          error_message AS "errorMessage"
+        FROM geocoding_cache
+        WHERE normalized_query = $1
+        LIMIT 1
+      `,
+      [normalizedQuery],
+    );
+
+    const row = result.rows[0];
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      ...row,
+      lat: row.lat === null ? null : Number(row.lat),
+      lng: row.lng === null ? null : Number(row.lng),
+    };
+  }
+
+  async touchGeocodingCacheLastUsedAt(normalizedQuery: string): Promise<void> {
+    await this.client.query(
+      `
+        UPDATE geocoding_cache
+        SET
+          last_used_at = now(),
+          updated_at = now()
+        WHERE normalized_query = $1
+      `,
+      [normalizedQuery],
+    );
+  }
+
+  async upsertGeocodingCacheSuccess(input: UpsertGeocodingCacheSuccessInput): Promise<void> {
+    await this.client.query(
+      `
+        INSERT INTO geocoding_cache (
+          query,
+          normalized_query,
+          provider,
+          status,
+          lat,
+          lng,
+          location,
+          raw_response,
+          error_message,
+          requested_at,
+          last_used_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          'success',
+          $4::numeric(10, 7),
+          $5::numeric(10, 7),
+          ST_SetSRID(ST_MakePoint($5::numeric(10, 7), $4::numeric(10, 7)), 4326),
+          $6::jsonb,
+          null,
+          now(),
+          now(),
+          now(),
+          now()
+        )
+        ON CONFLICT (normalized_query)
+        DO UPDATE SET
+          query = EXCLUDED.query,
+          provider = EXCLUDED.provider,
+          status = 'success',
+          lat = EXCLUDED.lat,
+          lng = EXCLUDED.lng,
+          location = EXCLUDED.location,
+          raw_response = EXCLUDED.raw_response,
+          error_message = null,
+          requested_at = now(),
+          last_used_at = now(),
+          updated_at = now()
+      `,
+      [
+        input.query,
+        input.normalizedQuery,
+        input.provider,
+        input.lat,
+        input.lng,
+        JSON.stringify(input.rawResponse),
+      ],
+    );
+  }
+
+  async upsertGeocodingCacheFailure(input: UpsertGeocodingCacheFailureInput): Promise<void> {
+    await this.client.query(
+      `
+        INSERT INTO geocoding_cache (
+          query,
+          normalized_query,
+          provider,
+          status,
+          lat,
+          lng,
+          location,
+          raw_response,
+          error_message,
+          requested_at,
+          last_used_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          'failed',
+          null,
+          null,
+          null,
+          $4::jsonb,
+          $5,
+          now(),
+          now(),
+          now(),
+          now()
+        )
+        ON CONFLICT (normalized_query)
+        DO UPDATE SET
+          query = EXCLUDED.query,
+          provider = EXCLUDED.provider,
+          status = 'failed',
+          lat = null,
+          lng = null,
+          location = null,
+          raw_response = EXCLUDED.raw_response,
+          error_message = EXCLUDED.error_message,
+          requested_at = now(),
+          last_used_at = now(),
+          updated_at = now()
+      `,
+      [
+        input.query,
+        input.normalizedQuery,
+        input.provider,
+        JSON.stringify(input.rawResponse),
+        input.errorMessage,
+      ],
+    );
+  }
+
+  async markTradeGeocodingSuccess(
+    tradeId: string,
+    provider: string,
+    lat: number,
+    lng: number,
+  ): Promise<void> {
+    await this.client.query(
+      `
+        UPDATE non_residential_trades
+        SET
+          lat = $2::numeric(10, 7),
+          lng = $3::numeric(10, 7),
+          location = ST_SetSRID(ST_MakePoint($3::numeric(10, 7), $2::numeric(10, 7)), 4326),
+          needs_geocoding = false,
+          geocoding_status = 'success',
+          geocoding_provider = $4,
+          geocoding_updated_at = now(),
+          geocoding_error_message = null,
+          updated_at = now()
+        WHERE id = $1::bigint
+      `,
+      [tradeId, lat, lng, provider],
+    );
+  }
+
+  async markTradeGeocodingFailure(
+    tradeId: string,
+    provider: string,
+    errorMessage: string,
+  ): Promise<void> {
+    await this.client.query(
+      `
+        UPDATE non_residential_trades
+        SET
+          needs_geocoding = false,
+          geocoding_status = 'failed',
+          geocoding_provider = $2,
+          geocoding_updated_at = now(),
+          geocoding_error_message = $3,
+          updated_at = now()
+        WHERE id = $1::bigint
+      `,
+      [tradeId, provider, errorMessage],
+    );
   }
 }
