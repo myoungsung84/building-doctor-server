@@ -487,4 +487,25 @@ export class NonResidentialTradesRepository {
       [tradeId, provider, errorMessage],
     );
   }
+
+  async markTradeGeocodingTransientFailure(
+    tradeId: string,
+    provider: string,
+    errorMessage: string,
+  ): Promise<void> {
+    await this.client.query(
+      `
+        UPDATE non_residential_trades
+        SET
+          needs_geocoding = true,
+          geocoding_status = 'pending',
+          geocoding_provider = $2,
+          geocoding_updated_at = now(),
+          geocoding_error_message = $3,
+          updated_at = now()
+        WHERE id = $1::bigint
+      `,
+      [tradeId, provider, errorMessage],
+    );
+  }
 }

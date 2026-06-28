@@ -1,24 +1,12 @@
+import {
+  classifyVWorldApiFailure,
+  classifyVWorldHttpFailure,
+  classifyVWorldMalformedResponse,
+  classifyVWorldRuntimeError,
+  type VWorldGeocodeResult,
+} from '@app/domain';
+
 const VWORLD_ENDPOINT = 'https://api.vworld.kr/req/address';
-
-export type VWorldGeocodeSuccess = {
-  lat: number;
-  lng: number;
-  provider: 'vworld';
-  query: string;
-  rawResponse: unknown;
-  refinedText: string | null;
-  status: 'success';
-};
-
-export type VWorldGeocodeFailure = {
-  errorMessage: string;
-  provider: 'vworld';
-  query: string;
-  rawResponse: unknown;
-  status: 'failed';
-};
-
-export type VWorldGeocodeResult = VWorldGeocodeFailure | VWorldGeocodeSuccess;
 
 type VWorldAddressResponse = {
   response?: {
@@ -55,6 +43,7 @@ export class VWorldGeocodingClient {
     if (!normalizedQuery) {
       return {
         errorMessage: 'empty geocoding query',
+        failureType: 'permanent',
         provider: 'vworld',
         query,
         rawResponse: null,
@@ -80,6 +69,7 @@ export class VWorldGeocodingClient {
       if (!response.ok) {
         return {
           errorMessage: `VWorld HTTP error: ${response.status} ${response.statusText}`,
+          failureType: classifyVWorldHttpFailure(response.status, response.statusText),
           provider: 'vworld',
           query: normalizedQuery,
           rawResponse: null,
@@ -98,6 +88,11 @@ export class VWorldGeocodingClient {
 
         return {
           errorMessage: `VWorld status is not OK${errorCode ? ` (${errorCode})` : ''}${errorText ? `: ${errorText}` : ''}`,
+          failureType: classifyVWorldApiFailure({
+            errorCode,
+            errorText,
+            responseStatus: status,
+          }),
           provider: 'vworld',
           query: normalizedQuery,
           rawResponse: json,
@@ -108,6 +103,9 @@ export class VWorldGeocodingClient {
       if (crs !== 'EPSG:4326') {
         return {
           errorMessage: `Unexpected VWorld CRS: ${crs ?? 'unknown'}`,
+          failureType: classifyVWorldMalformedResponse(
+            `Unexpected VWorld CRS: ${crs ?? 'unknown'}`,
+          ),
           provider: 'vworld',
           query: normalizedQuery,
           rawResponse: json,
@@ -121,6 +119,9 @@ export class VWorldGeocodingClient {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         return {
           errorMessage: 'VWorld response does not contain valid numeric point.x/point.y',
+          failureType: classifyVWorldMalformedResponse(
+            'VWorld response does not contain valid numeric point.x/point.y',
+          ),
           provider: 'vworld',
           query: normalizedQuery,
           rawResponse: json,
@@ -138,8 +139,11 @@ export class VWorldGeocodingClient {
         status: 'success',
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'unknown VWorld error';
+
       return {
-        errorMessage: error instanceof Error ? error.message : 'unknown VWorld error',
+        errorMessage,
+        failureType: classifyVWorldRuntimeError(errorMessage),
         provider: 'vworld',
         query: normalizedQuery,
         rawResponse: null,

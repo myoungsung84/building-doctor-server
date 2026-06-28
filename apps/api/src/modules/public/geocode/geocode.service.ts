@@ -75,19 +75,25 @@ export class GeocodeService {
       };
     }
 
-    await this.geocodeRepository.upsertFailure({
-      errorMessage: result.errorMessage,
-      normalizedQuery,
-      provider: result.provider,
-      query,
-      rawResponse: result.rawResponse,
-    });
+    if (result.failureType === 'permanent') {
+      await this.geocodeRepository.upsertFailure({
+        errorMessage: result.errorMessage,
+        normalizedQuery,
+        provider: result.provider,
+        query,
+        rawResponse: result.rawResponse,
+      });
 
-    throw ApiException.notFound('주소를 찾을 수 없습니다.', [
-      {
-        field: 'q',
-        reason: result.errorMessage || 'VWorld 주소 좌표 변환 결과가 없습니다.',
-      },
-    ]);
+      throw ApiException.notFound('주소를 찾을 수 없습니다.', [
+        {
+          field: 'q',
+          reason: result.errorMessage || 'VWorld 주소 좌표 변환 결과가 없습니다.',
+        },
+      ]);
+    }
+
+    throw ApiException.internal(
+      '지오코딩 서비스가 일시적으로 불안정합니다. 잠시 후 다시 시도해 주세요.',
+    );
   }
 }

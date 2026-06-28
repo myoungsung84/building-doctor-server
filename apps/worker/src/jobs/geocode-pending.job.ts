@@ -4,12 +4,14 @@ import { NonResidentialTradesRepository } from '../repositories/non-residential-
 import { VWorldGeocodingClient } from '../clients/vworld-geocoding.client';
 
 export type GeocodePendingOptions = {
+  delayMs: number;
   limit: number;
 };
 
 export type GeocodePendingJobSummary = {
-  apiFailure: number;
+  apiPermanentFailure: number;
   apiSuccess: number;
+  apiTransientFailure: number;
   cacheFailureHit: number;
   cacheSuccessHit: number;
   pendingFound: number;
@@ -27,8 +29,9 @@ export class GeocodePendingJob {
     const context = 'GeocodePendingJob';
     const trades = await this.repository.findPendingGeocodingTrades(options.limit);
     const summary: GeocodePendingJobSummary = {
-      apiFailure: 0,
+      apiPermanentFailure: 0,
       apiSuccess: 0,
+      apiTransientFailure: 0,
       cacheFailureHit: 0,
       cacheSuccessHit: 0,
       pendingFound: trades.length,
@@ -43,6 +46,8 @@ export class GeocodePendingJob {
     this.logger.log(`pending geocoding trades found: ${trades.length}`, context);
 
     for (const trade of trades) {
+      let shouldDelay = false;
+
       try {
         const normalizedQuery = normalizeGeocodingQuery(trade.geocodingQuery);
         const cache = await this.repository.findGeocodingCacheByNormalizedQuery(normalizedQuery);
@@ -70,6 +75,7 @@ export class GeocodePendingJob {
           continue;
         }
 
+        shouldDelay = true;
         const result = await this.vworldClient.geocodeParcelAddress(trade.geocodingQuery);
 
         if (result.status === 'success') {
@@ -91,19 +97,33 @@ export class GeocodePendingJob {
           continue;
         }
 
-        await this.repository.upsertGeocodingCacheFailure({
-          errorMessage: result.errorMessage,
-          normalizedQuery,
-          provider: result.provider,
-          query: trade.geocodingQuery,
-          rawResponse: result.rawResponse,
-        });
-        await this.repository.markTradeGeocodingFailure(
+        if (result.failureType === 'permanent') {
+          await this.repository.upsertGeocodingCacheFailure({
+            errorMessage: result.errorMessage,
+            normalizedQuery,
+            provider: result.provider,
+            query: trade.geocodingQuery,
+            rawResponse: result.rawResponse,
+          });
+          await this.repository.markTradeGeocodingFailure(
+            trade.id,
+            result.provider,
+            result.errorMessage,
+          );
+          summary.apiPermanentFailure += 1;
+          continue;
+        }
+
+        await this.repository.markTradeGeocodingTransientFailure(
           trade.id,
           result.provider,
           result.errorMessage,
         );
-        summary.apiFailure += 1;
+        summary.apiTransientFailure += 1;
+        this.logger.warn(
+          `transient geocoding failure: provider=${result.provider}, query=${trade.geocodingQuery}, error=${result.errorMessage}`,
+          context,
+        );
       } catch (error) {
         summary.skipped += 1;
         const trace = error instanceof Error ? error.stack : undefined;
@@ -112,14 +132,24 @@ export class GeocodePendingJob {
           trace,
           context,
         );
+      } finally {
+        if (shouldDelay && options.delayMs > 0) {
+          await sleep(options.delayMs);
+        }
       }
     }
 
     this.logger.log(
-      `geocoding done: pending=${summary.pendingFound}, cacheSuccessHit=${summary.cacheSuccessHit}, cacheFailureHit=${summary.cacheFailureHit}, apiSuccess=${summary.apiSuccess}, apiFailure=${summary.apiFailure}, skipped=${summary.skipped}`,
+      `geocoding done: pending=${summary.pendingFound}, cacheSuccessHit=${summary.cacheSuccessHit}, cacheFailureHit=${summary.cacheFailureHit}, apiSuccess=${summary.apiSuccess}, apiPermanentFailure=${summary.apiPermanentFailure}, apiTransientFailure=${summary.apiTransientFailure}, skipped=${summary.skipped}`,
       context,
     );
 
     return summary;
   }
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
