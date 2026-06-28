@@ -3,9 +3,13 @@ import { Injectable } from '@nestjs/common';
 import { ApiException } from '@app/api';
 import type { NearbyDisplayMode, NearbyTradesQuery } from './dto/nearby-trades.query';
 import type { TradeHistoryQuery } from './dto/trade-history.query';
-import { TradesRepository, type NearbyTradeRow } from './trades.repository';
+import type { TradeSummariesQuery, TradeSummaryLevel } from './dto/trade-summaries.query';
+import { TradesRepository, type NearbyTradeRow, type TradeSummaryRow } from './trades.repository';
 import {
+  buildDistrictKey,
+  buildDongKey,
   buildMarkerKey,
+  buildParcelKey,
   calculateBuildingAreaPyeong,
   calculatePricePerPyeongManwon,
   endOfYearMonth,
@@ -28,6 +32,7 @@ type NearbyMarkerItem = {
   medianDealAmountManwon: number | null;
   medianPricePerPyeongManwon: number | null;
   markerKey: string;
+  parcelKey: string;
   sggCd: string;
   sggNm: string;
   tradeCount: number;
@@ -52,12 +57,18 @@ type NearbyMapItem = {
   averagePricePerPyeongManwon: number | null;
   count: number;
   id: string;
+  jibun: string | null;
   label: string;
   lat: number;
+  latestDealAmountManwon: number | null;
   latestDealDate: string | null;
   lng: number;
   medianDealAmountManwon: number | null;
   medianPricePerPyeongManwon: number | null;
+  parcelKey: string | null;
+  regionCode: string | null;
+  regionName: string | null;
+  sggCd: string | null;
   sggNm: string | null;
   type: 'cluster' | 'district' | 'dong' | 'parcel';
   umdNm: string | null;
@@ -97,6 +108,56 @@ type YearlyAveragePricePerPyeongItem = {
   averagePricePerPyeongManwon: number;
   tradeCount: number;
   year: number;
+};
+
+type TradeAnalyticsRow = {
+  buildingAreaSqm: number | null;
+  dealAmountManwon: number;
+  dealDate: string;
+  jibun: string;
+  lat: number;
+  lng: number;
+  sggCd: string;
+  sggNm: string;
+  umdNm: string;
+};
+
+type TradeRegionSummaryItem = {
+  averageDealAmountManwon: number | null;
+  averagePricePerPyeongManwon: number | null;
+  centerLat: number;
+  centerLng: number;
+  id: string;
+  latestContractDate: string | null;
+  level: TradeSummaryLevel;
+  medianDealAmountManwon: number | null;
+  medianPricePerPyeongManwon: number | null;
+  parentRegionCode: string | null;
+  parentRegionName: string | null;
+  parcelCount: number;
+  regionCode: string;
+  regionName: string;
+  sggCd: string | null;
+  sggNm: string | null;
+  tradeCount: number;
+  umdNm: string | null;
+};
+
+type TradeSummariesResult = {
+  filters: {
+    buildingUse: string | null;
+    excludeShareDeals: boolean;
+    includeCanceled: boolean;
+    sggCd: string | null;
+    sidoCd: string | null;
+    sidoNm: string | null;
+  };
+  items: TradeRegionSummaryItem[];
+  level: TradeSummaryLevel;
+  period: {
+    from: string;
+    to: string;
+  };
 };
 
 function average(values: number[]): number | null {
@@ -139,7 +200,11 @@ function medianNumber(values: number[], digits = 0): number | null {
   return value === undefined ? null : roundTo(value, digits);
 }
 
-function resolvePeriodWindow(query: NearbyTradesQuery, defaultFromYm: string, defaultToYm: string) {
+function resolvePeriodWindow(
+  query: { from?: string; to?: string },
+  defaultFromYm: string,
+  defaultToYm: string,
+) {
   const fromYm = query.from ?? defaultFromYm;
   const toYm = query.to ?? defaultToYm;
 
@@ -202,7 +267,7 @@ function resolveMapItemsLimit(displayMode: NearbyDisplayMode, requestedLimit: nu
   return Math.min(requestedLimit, DISPLAY_MODE_LIMITS[displayMode]);
 }
 
-function buildUniqueAddressKey(row: NearbyTradeRow): string {
+function buildUniqueAddressKey(row: TradeAnalyticsRow): string {
   return `${row.sggNm}:${row.umdNm}:${row.jibun}`;
 }
 
@@ -219,13 +284,13 @@ function extractLatestDealMonth(rows: Array<{ dealDate: string }>): string | nul
   return latestDealDate ? latestDealDate.slice(0, 7) : null;
 }
 
-function calculatePricePerPyeongValues(rows: NearbyTradeRow[]): number[] {
+function calculatePricePerPyeongValues(rows: TradeAnalyticsRow[]): number[] {
   return rows
     .map((row) => calculatePricePerPyeongManwon(row.dealAmountManwon, row.buildingAreaSqm))
     .filter((value): value is number => value !== null && Number.isFinite(value) && value > 0);
 }
 
-function buildMapStats(rows: NearbyTradeRow[]) {
+function buildMapStats(rows: TradeAnalyticsRow[]) {
   const dealAmounts = rows.map((row) => row.dealAmountManwon);
   const pricePerPyeongValues = calculatePricePerPyeongValues(rows);
 
@@ -238,7 +303,7 @@ function buildMapStats(rows: NearbyTradeRow[]) {
   };
 }
 
-function calculateCentroid(rows: NearbyTradeRow[]) {
+function calculateCentroid(rows: Array<{ lat: number; lng: number }>) {
   const lat = rows.reduce((sum, row) => sum + row.lat, 0) / rows.length;
   const lng = rows.reduce((sum, row) => sum + row.lng, 0) / rows.length;
 
@@ -255,6 +320,20 @@ function sortMapItems(items: NearbyMapItem[]): NearbyMapItem[] {
     }
 
     return right.count - left.count;
+  });
+}
+
+function sortRegionSummaryItems(items: TradeRegionSummaryItem[]): TradeRegionSummaryItem[] {
+  return [...items].sort((left, right) => {
+    if (left.tradeCount === right.tradeCount) {
+      if (left.latestContractDate === right.latestContractDate) {
+        return left.regionName.localeCompare(right.regionName, 'ko');
+      }
+
+      return (right.latestContractDate ?? '').localeCompare(left.latestContractDate ?? '');
+    }
+
+    return right.tradeCount - left.tradeCount;
   });
 }
 
@@ -290,6 +369,41 @@ export class TradesService {
     };
   }
 
+  async getTradeSummaries(query: TradeSummariesQuery): Promise<TradeSummariesResult> {
+    const bounds = await this.tradesRepository.findPeriodBounds();
+
+    if (!bounds.fromYm || !bounds.toYm) {
+      throw ApiException.notFound('조회 가능한 거래 데이터가 없습니다.');
+    }
+
+    const period = resolvePeriodWindow(query, bounds.fromYm, bounds.toYm);
+    const rows = await this.tradesRepository.findTradeSummaryRows({
+      buildingUse: query.buildingUse,
+      excludeShareDeals: query.excludeShareDeals,
+      fromDate: period.fromDate,
+      includeCanceled: query.includeCanceled,
+      sggCd: query.sggCd,
+      toDate: period.toDate,
+    });
+
+    return {
+      filters: {
+        buildingUse: query.buildingUse ?? null,
+        excludeShareDeals: query.excludeShareDeals,
+        includeCanceled: query.includeCanceled,
+        sggCd: query.sggCd ?? null,
+        sidoCd: query.sidoCd ?? null,
+        sidoNm: query.sidoNm ?? null,
+      },
+      items: this.buildTradeRegionSummaryItems(query.level, rows),
+      level: query.level,
+      period: {
+        from: period.fromYm,
+        to: period.toYm,
+      },
+    };
+  }
+
   async getNearbyTrades(query: NearbyTradesQuery) {
     const bounds = await this.tradesRepository.findPeriodBounds();
 
@@ -308,6 +422,7 @@ export class TradesService {
       radiusMeters: query.radiusMeters,
       toDate: period.toDate,
     });
+    // TODO: summaries API가 프론트에 연결되면 nearby의 displayMode/mapItems 책임을 더 줄인다.
     const resolvedDisplayMode = resolveDisplayMode(query);
 
     const grouped = new Map<string, NearbyTradeRow[]>();
@@ -351,6 +466,7 @@ export class TradesService {
         medianDealAmountManwon: medianNumber(dealAmounts),
         medianPricePerPyeongManwon: medianNumber(pricePerPyeongValues, 2),
         markerKey,
+        parcelKey: markerKey,
         sggCd: displayRow.sggCd,
         sggNm: displayRow.sggNm,
         tradeCount: markerRows.length,
@@ -387,6 +503,7 @@ export class TradesService {
       radiusM: query.radiusMeters,
       result: {
         items,
+        parcels: items,
         displayMode: resolvedDisplayMode,
         mapItems: limitedMapItems,
         markerMeta: {
@@ -416,6 +533,7 @@ export class TradesService {
     rows: NearbyTradeRow[],
     parcelMarkers: NearbyMarkerItem[],
   ): NearbyMapItem[] {
+    // TODO: 장기적으로 parcel 외 요약 마커는 summaries API로 이관하고 nearby는 반경 상세 전용으로 단순화한다.
     switch (displayMode) {
       case 'parcel-detail':
         return parcelMarkers.map((item) => ({
@@ -423,12 +541,18 @@ export class TradesService {
           averagePricePerPyeongManwon: item.averagePricePerPyeongManwon,
           count: item.tradeCount,
           id: `parcel:${item.markerKey}`,
+          jibun: item.jibun,
           label: item.addressLabel,
           lat: item.lat,
+          latestDealAmountManwon: item.latestDealAmountManwon,
           latestDealDate: item.latestDealDate.slice(0, 7),
           lng: item.lng,
           medianDealAmountManwon: item.medianDealAmountManwon ?? null,
           medianPricePerPyeongManwon: item.medianPricePerPyeongManwon ?? null,
+          parcelKey: item.parcelKey,
+          regionCode: item.parcelKey,
+          regionName: `${item.umdNm} ${item.jibun}`,
+          sggCd: item.sggCd,
           sggNm: item.sggNm,
           type: 'parcel',
           umdNm: item.umdNm,
@@ -469,12 +593,18 @@ export class TradesService {
           averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
           count: groupRows.length,
           id: `cluster:${groupKey}`,
+          jibun: null,
           label,
           lat: centroid.lat,
+          latestDealAmountManwon: null,
           latestDealDate: stats.latestDealDate,
           lng: centroid.lng,
           medianDealAmountManwon: stats.medianDealAmountManwon,
           medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          parcelKey: null,
+          regionCode: null,
+          regionName: distinctDongCount === 1 ? (groupRows[0]?.umdNm ?? null) : null,
+          sggCd: null,
           sggNm: distinctDongCount === 1 ? (groupRows[0]?.sggNm ?? null) : null,
           type: 'cluster',
           umdNm: distinctDongCount === 1 ? (groupRows[0]?.umdNm ?? null) : null,
@@ -513,20 +643,107 @@ export class TradesService {
           count: groupRows.length,
           id:
             displayMode === 'district-summary'
-              ? `district:${firstRow.sggNm}`
-              : `dong:${firstRow.sggNm}:${firstRow.umdNm}`,
+              ? `district:${firstRow.sggCd}`
+              : `dong:${buildDongKey(firstRow.sggCd, firstRow.umdNm)}`,
+          jibun: null,
           label: displayMode === 'district-summary' ? `반경 내 ${firstRow.sggNm}` : firstRow.umdNm,
           lat: centroid.lat,
+          latestDealAmountManwon: null,
           latestDealDate: stats.latestDealDate,
           lng: centroid.lng,
           medianDealAmountManwon: stats.medianDealAmountManwon,
           medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          parcelKey: null,
+          regionCode:
+            displayMode === 'district-summary'
+              ? buildDistrictKey(firstRow.sggCd)
+              : buildDongKey(firstRow.sggCd, firstRow.umdNm),
+          regionName: displayMode === 'district-summary' ? firstRow.sggNm : firstRow.umdNm,
+          sggCd: firstRow.sggCd,
           sggNm: firstRow.sggNm,
           type: displayMode === 'district-summary' ? 'district' : 'dong',
           umdNm: displayMode === 'district-summary' ? null : firstRow.umdNm,
         } satisfies NearbyMapItem;
       }),
     );
+  }
+
+  private buildTradeRegionSummaryItems(
+    level: TradeSummaryLevel,
+    rows: TradeSummaryRow[],
+  ): TradeRegionSummaryItem[] {
+    const grouped = new Map<string, TradeSummaryRow[]>();
+
+    for (const row of rows) {
+      const groupKey =
+        level === 'district' ? buildDistrictKey(row.sggCd) : buildDongKey(row.sggCd, row.umdNm);
+      const current = grouped.get(groupKey) ?? [];
+      current.push(row);
+      grouped.set(groupKey, current);
+    }
+
+    const items = [...grouped.entries()].map(([groupKey, groupRows]) => {
+      const stats = buildMapStats(groupRows);
+      const centroid = calculateCentroid(groupRows);
+      const firstRow = groupRows[0];
+      const latestContractDate = sortByDealDateDescending(groupRows)[0]?.dealDate ?? null;
+
+      if (!firstRow) {
+        throw new Error(`grouped trade summary rows missing for ${groupKey}`);
+      }
+
+      const parcelCount = new Set(
+        groupRows
+          .map((row) => buildParcelKey(row.sggCd, row.umdNm, row.jibun))
+          .filter((value): value is string => value !== null),
+      ).size;
+
+      if (level === 'district') {
+        return {
+          averageDealAmountManwon: stats.averageDealAmountManwon,
+          averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
+          centerLat: centroid.lat,
+          centerLng: centroid.lng,
+          id: `district:${firstRow.sggCd}`,
+          latestContractDate,
+          level,
+          medianDealAmountManwon: stats.medianDealAmountManwon,
+          medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          parentRegionCode: firstRow.sggCd.slice(0, 2),
+          parentRegionName: '서울특별시',
+          parcelCount,
+          regionCode: firstRow.sggCd,
+          regionName: firstRow.sggNm,
+          sggCd: firstRow.sggCd,
+          sggNm: firstRow.sggNm,
+          tradeCount: groupRows.length,
+          umdNm: null,
+        } satisfies TradeRegionSummaryItem;
+      }
+
+      return {
+        averageDealAmountManwon: stats.averageDealAmountManwon,
+        averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
+        centerLat: centroid.lat,
+        centerLng: centroid.lng,
+        id: `dong:${buildDongKey(firstRow.sggCd, firstRow.umdNm)}`,
+        latestContractDate,
+        level,
+        medianDealAmountManwon: stats.medianDealAmountManwon,
+        medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+        parentRegionCode: firstRow.sggCd,
+        parentRegionName: firstRow.sggNm,
+        parcelCount,
+        regionCode: buildDongKey(firstRow.sggCd, firstRow.umdNm),
+        regionName: firstRow.umdNm,
+        sggCd: firstRow.sggCd,
+        sggNm: firstRow.sggNm,
+        tradeCount: groupRows.length,
+        umdNm: firstRow.umdNm,
+      } satisfies TradeRegionSummaryItem;
+    });
+
+    return sortRegionSummaryItems(items);
   }
 
   async getTradeHistory(query: TradeHistoryQuery) {
@@ -634,6 +851,7 @@ export class TradesService {
         lat: latestRow.lat,
         lng: latestRow.lng,
         markerKey: buildMarkerKey(latestRow.sggCd, latestRow.umdNm, latestRow.jibun),
+        parcelKey: buildParcelKey(latestRow.sggCd, latestRow.umdNm, latestRow.jibun),
         sggCd: latestRow.sggCd,
         sggNm: latestRow.sggNm,
         umdNm: latestRow.umdNm,

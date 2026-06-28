@@ -1,5 +1,31 @@
-export function buildMarkerKey(sggCd: string, umdNm: string, jibun: string): string {
+export function buildParcelKey(
+  sggCd: string | null | undefined,
+  umdNm: string | null | undefined,
+  jibun: string | null | undefined,
+): string | null {
+  if (!sggCd || !umdNm || !jibun) {
+    return null;
+  }
+
   return `${sggCd}:${umdNm}:${jibun}`;
+}
+
+export function buildMarkerKey(sggCd: string, umdNm: string, jibun: string): string {
+  const parcelKey = buildParcelKey(sggCd, umdNm, jibun);
+
+  if (!parcelKey) {
+    throw new Error('markerKey를 생성하려면 sggCd, umdNm, jibun이 모두 필요합니다.');
+  }
+
+  return parcelKey;
+}
+
+export function buildDongKey(sggCd: string, umdNm: string): string {
+  return `${sggCd}:${umdNm}`;
+}
+
+export function buildDistrictKey(sggCd: string): string {
+  return sggCd;
 }
 
 export function calculateBuildingAreaPyeong(buildingAreaSqm: number | null): number | null {

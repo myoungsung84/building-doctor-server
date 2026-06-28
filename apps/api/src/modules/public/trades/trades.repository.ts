@@ -14,6 +14,15 @@ type NearbyTradeQueryInput = {
   toDate: string;
 };
 
+type TradeSummaryQueryInput = {
+  buildingUse?: string;
+  excludeShareDeals: boolean;
+  fromDate: string;
+  includeCanceled: boolean;
+  sggCd?: string;
+  toDate: string;
+};
+
 export type NearbyTradeRow = {
   buildingAreaSqm: number | null;
   buildingType: string | null;
@@ -57,6 +66,19 @@ export type TradeHistoryRow = {
   lat: number | null;
   lng: number | null;
   sellerGbn: string | null;
+  sggCd: string;
+  sggNm: string;
+  umdNm: string;
+};
+
+export type TradeSummaryRow = {
+  buildingAreaSqm: number | null;
+  buildingUse: string | null;
+  dealAmountManwon: number;
+  dealDate: string;
+  jibun: string;
+  lat: number;
+  lng: number;
   sggCd: string;
   sggNm: string;
   umdNm: string;
@@ -177,6 +199,58 @@ export class TradesRepository {
       ...row,
       dealAmountManwon: Number(row.dealAmountManwon),
       id: Number(row.id),
+    }));
+  }
+
+  async findTradeSummaryRows(query: TradeSummaryQueryInput): Promise<TradeSummaryRow[]> {
+    const values: Array<string> = [query.fromDate, query.toDate];
+    const conditions = [
+      'is_jibun_masked = false',
+      'location IS NOT NULL',
+      'deal_date BETWEEN $1::date AND $2::date',
+    ];
+
+    if (!query.includeCanceled) {
+      conditions.push('is_canceled = false');
+    }
+
+    if (query.excludeShareDeals) {
+      conditions.push('is_share_deal = false');
+    }
+
+    if (query.buildingUse) {
+      values.push(query.buildingUse);
+      conditions.push(`building_use = $${values.length}`);
+    }
+
+    if (query.sggCd) {
+      values.push(query.sggCd);
+      conditions.push(`sgg_cd = $${values.length}`);
+    }
+
+    const result = await this.pool.query<TradeSummaryRow>(
+      `
+        SELECT
+          sgg_cd AS "sggCd",
+          sgg_nm AS "sggNm",
+          umd_nm AS "umdNm",
+          jibun,
+          lat::float8 AS lat,
+          lng::float8 AS lng,
+          deal_date::text AS "dealDate",
+          deal_amount_manwon::int8 AS "dealAmountManwon",
+          building_area::float8 AS "buildingAreaSqm",
+          building_use AS "buildingUse"
+        FROM non_residential_trades
+        WHERE ${conditions.join('\n          AND ')}
+        ORDER BY deal_date DESC, sgg_cd ASC, umd_nm ASC, jibun ASC
+      `,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      ...row,
+      dealAmountManwon: Number(row.dealAmountManwon),
     }));
   }
 

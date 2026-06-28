@@ -10,6 +10,7 @@ import {
 } from '@app/api';
 import { nearbyTradesQuerySchema } from './dto/nearby-trades.query';
 import { tradeHistoryQuerySchema } from './dto/trade-history.query';
+import { tradeSummariesQuerySchema } from './dto/trade-summaries.query';
 import { TradesService } from './trades.service';
 
 @UseFilters(HttpExceptionFilter)
@@ -17,6 +18,20 @@ import { TradesService } from './trades.service';
 @Controller('trades')
 export class TradesController {
   constructor(private readonly tradesService: TradesService) {}
+
+  @Get('summaries')
+  async getSummaries(@Req() request: RequestWithContext, @Query() query: Record<string, unknown>) {
+    const parsedQuery = parseQuery(tradeSummariesQuerySchema, query);
+    const result = await this.tradesService.getTradeSummaries(parsedQuery);
+
+    return apiSuccess(
+      result,
+      createApiMeta({
+        count: result.items.length,
+        requestId: request.requestId ?? 'req_unknown',
+      }),
+    );
+  }
 
   @Get('history')
   async getHistory(@Req() request: RequestWithContext, @Query() query: Record<string, unknown>) {
