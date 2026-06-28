@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { ApiException } from '@app/api';
-import type { NearbyTradesQuery } from './dto/nearby-trades.query';
+import type { NearbyDisplayMode, NearbyTradesQuery } from './dto/nearby-trades.query';
 import type { TradeHistoryQuery } from './dto/trade-history.query';
 import { TradesRepository, type NearbyTradeRow } from './trades.repository';
 import {
@@ -25,6 +25,8 @@ type NearbyMarkerItem = {
   latestDealAmountManwon: number;
   latestDealDate: string;
   lng: number;
+  medianDealAmountManwon: number | null;
+  medianPricePerPyeongManwon: number | null;
   markerKey: string;
   sggCd: string;
   sggNm: string;
@@ -35,9 +37,37 @@ type NearbyMarkerItem = {
 type NearbySummary = {
   averageDealAmountManwon: number | null;
   averagePricePerPyeongManwon: number | null;
+  geocodedCount: number;
+  latestDealDate: string | null;
   markerCount: number;
   medianDealAmountManwon: number | null;
+  medianPricePerPyeongManwon: number | null;
+  totalCount: number;
   tradeCount: number;
+  uniqueAddressCount: number;
+};
+
+type NearbyMapItem = {
+  averageDealAmountManwon: number | null;
+  averagePricePerPyeongManwon: number | null;
+  count: number;
+  id: string;
+  label: string;
+  lat: number;
+  latestDealDate: string | null;
+  lng: number;
+  medianDealAmountManwon: number | null;
+  medianPricePerPyeongManwon: number | null;
+  sggNm: string | null;
+  type: 'cluster' | 'district' | 'dong' | 'parcel';
+  umdNm: string | null;
+};
+
+type NearbyMarkerMeta = {
+  displayMode: NearbyDisplayMode;
+  limited: boolean;
+  returnedCount: number;
+  totalCandidates: number;
 };
 
 type DealAmountTrendItem = {
@@ -92,7 +122,7 @@ function daysBetween(fromDate: string, toDate: string): number {
   return (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24);
 }
 
-function median(values: number[]): number | null {
+function medianNumber(values: number[], digits = 0): number | null {
   if (values.length === 0) {
     return null;
   }
@@ -101,10 +131,12 @@ function median(values: number[]): number | null {
   const middle = Math.floor(sorted.length / 2);
 
   if (sorted.length % 2 === 0) {
-    return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+    return roundTo((sorted[middle - 1] + sorted[middle]) / 2, digits);
   }
 
-  return sorted[middle] ?? null;
+  const value = sorted[middle];
+
+  return value === undefined ? null : roundTo(value, digits);
 }
 
 function resolvePeriodWindow(query: NearbyTradesQuery, defaultFromYm: string, defaultToYm: string) {
@@ -136,6 +168,93 @@ function sortByDealDateDescending<T extends { dealDate: string; id?: number }>(i
     }
 
     return right.dealDate.localeCompare(left.dealDate);
+  });
+}
+
+const DISPLAY_MODE_LIMITS: Record<NearbyDisplayMode, number> = {
+  'block-cluster': 200,
+  'district-summary': 50,
+  'dong-summary': 100,
+  'parcel-detail': 300,
+};
+
+function resolveDisplayMode(query: NearbyTradesQuery): NearbyDisplayMode {
+  if (query.displayMode) {
+    return query.displayMode;
+  }
+
+  if (query.radiusMeters <= 500) {
+    return 'parcel-detail';
+  }
+
+  if (query.radiusMeters <= 1000) {
+    return 'block-cluster';
+  }
+
+  if (query.radiusMeters <= 2000) {
+    return 'dong-summary';
+  }
+
+  return 'district-summary';
+}
+
+function resolveMapItemsLimit(displayMode: NearbyDisplayMode, requestedLimit: number): number {
+  return Math.min(requestedLimit, DISPLAY_MODE_LIMITS[displayMode]);
+}
+
+function buildUniqueAddressKey(row: NearbyTradeRow): string {
+  return `${row.sggNm}:${row.umdNm}:${row.jibun}`;
+}
+
+function extractLatestDealMonth(rows: Array<{ dealDate: string }>): string | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const latestDealDate = rows.reduce(
+    (latest, row) => (row.dealDate > latest ? row.dealDate : latest),
+    rows[0]?.dealDate ?? '',
+  );
+
+  return latestDealDate ? latestDealDate.slice(0, 7) : null;
+}
+
+function calculatePricePerPyeongValues(rows: NearbyTradeRow[]): number[] {
+  return rows
+    .map((row) => calculatePricePerPyeongManwon(row.dealAmountManwon, row.buildingAreaSqm))
+    .filter((value): value is number => value !== null && Number.isFinite(value) && value > 0);
+}
+
+function buildMapStats(rows: NearbyTradeRow[]) {
+  const dealAmounts = rows.map((row) => row.dealAmountManwon);
+  const pricePerPyeongValues = calculatePricePerPyeongValues(rows);
+
+  return {
+    averageDealAmountManwon: averageWhole(dealAmounts),
+    averagePricePerPyeongManwon: average(pricePerPyeongValues),
+    latestDealDate: extractLatestDealMonth(rows),
+    medianDealAmountManwon: medianNumber(dealAmounts),
+    medianPricePerPyeongManwon: medianNumber(pricePerPyeongValues, 2),
+  };
+}
+
+function calculateCentroid(rows: NearbyTradeRow[]) {
+  const lat = rows.reduce((sum, row) => sum + row.lat, 0) / rows.length;
+  const lng = rows.reduce((sum, row) => sum + row.lng, 0) / rows.length;
+
+  return {
+    lat: roundTo(lat, 6),
+    lng: roundTo(lng, 6),
+  };
+}
+
+function sortMapItems(items: NearbyMapItem[]): NearbyMapItem[] {
+  return [...items].sort((left, right) => {
+    if (left.count === right.count) {
+      return (right.latestDealDate ?? '').localeCompare(left.latestDealDate ?? '');
+    }
+
+    return right.count - left.count;
   });
 }
 
@@ -189,6 +308,7 @@ export class TradesService {
       radiusMeters: query.radiusMeters,
       toDate: period.toDate,
     });
+    const resolvedDisplayMode = resolveDisplayMode(query);
 
     const grouped = new Map<string, NearbyTradeRow[]>();
 
@@ -228,6 +348,8 @@ export class TradesService {
         latestDealAmountManwon: latestRow.dealAmountManwon,
         latestDealDate: latestRow.dealDate,
         lng: displayRow.lng,
+        medianDealAmountManwon: medianNumber(dealAmounts),
+        medianPricePerPyeongManwon: medianNumber(pricePerPyeongValues, 2),
         markerKey,
         sggCd: displayRow.sggCd,
         sggNm: displayRow.sggNm,
@@ -245,10 +367,11 @@ export class TradesService {
     });
     const hasMore = sortedMarkers.length > query.limit;
     const items = sortedMarkers.slice(0, query.limit);
-    const tradeAmounts = rows.map((row) => row.dealAmountManwon);
-    const summaryPriceValues = rows
-      .map((row) => calculatePricePerPyeongManwon(row.dealAmountManwon, row.buildingAreaSqm))
-      .filter((value): value is number => value !== null);
+    const mapItemsLimit = resolveMapItemsLimit(resolvedDisplayMode, query.limit);
+    const allMapItems = this.buildNearbyMapItems(resolvedDisplayMode, rows, sortedMarkers);
+    const limitedMapItems = allMapItems.slice(0, mapItemsLimit);
+    const summaryStats = buildMapStats(rows);
+    const uniqueAddressCount = new Set(rows.map((row) => buildUniqueAddressKey(row))).size;
 
     return {
       center: {
@@ -261,17 +384,149 @@ export class TradesService {
         limit: query.limit,
       },
       radiusMeters: query.radiusMeters,
+      radiusM: query.radiusMeters,
       result: {
         items,
+        displayMode: resolvedDisplayMode,
+        mapItems: limitedMapItems,
+        markerMeta: {
+          displayMode: resolvedDisplayMode,
+          limited: allMapItems.length > mapItemsLimit,
+          returnedCount: limitedMapItems.length,
+          totalCandidates: rows.length,
+        } satisfies NearbyMarkerMeta,
         summary: {
-          averageDealAmountManwon: averageWhole(tradeAmounts),
-          averagePricePerPyeongManwon: average(summaryPriceValues),
+          averageDealAmountManwon: summaryStats.averageDealAmountManwon,
+          averagePricePerPyeongManwon: summaryStats.averagePricePerPyeongManwon,
+          geocodedCount: rows.length,
+          latestDealDate: summaryStats.latestDealDate,
           markerCount: sortedMarkers.length,
-          medianDealAmountManwon: median(tradeAmounts),
+          medianDealAmountManwon: summaryStats.medianDealAmountManwon,
+          medianPricePerPyeongManwon: summaryStats.medianPricePerPyeongManwon,
+          totalCount: rows.length,
           tradeCount: rows.length,
+          uniqueAddressCount,
         } satisfies NearbySummary,
       },
     };
+  }
+
+  private buildNearbyMapItems(
+    displayMode: NearbyDisplayMode,
+    rows: NearbyTradeRow[],
+    parcelMarkers: NearbyMarkerItem[],
+  ): NearbyMapItem[] {
+    switch (displayMode) {
+      case 'parcel-detail':
+        return parcelMarkers.map((item) => ({
+          averageDealAmountManwon: item.averageDealAmountManwon,
+          averagePricePerPyeongManwon: item.averagePricePerPyeongManwon,
+          count: item.tradeCount,
+          id: `parcel:${item.markerKey}`,
+          label: item.addressLabel,
+          lat: item.lat,
+          latestDealDate: item.latestDealDate.slice(0, 7),
+          lng: item.lng,
+          medianDealAmountManwon: item.medianDealAmountManwon ?? null,
+          medianPricePerPyeongManwon: item.medianPricePerPyeongManwon ?? null,
+          sggNm: item.sggNm,
+          type: 'parcel',
+          umdNm: item.umdNm,
+        }));
+      case 'block-cluster':
+        return this.buildClusterMapItems(rows);
+      case 'dong-summary':
+        return this.buildGroupedSummaryMapItems(rows, 'dong-summary');
+      case 'district-summary':
+        return this.buildGroupedSummaryMapItems(rows, 'district-summary');
+    }
+  }
+
+  private buildClusterMapItems(rows: NearbyTradeRow[]): NearbyMapItem[] {
+    const gridSize = 0.002;
+    const grouped = new Map<string, NearbyTradeRow[]>();
+
+    for (const row of rows) {
+      const gridLat = Math.round(row.lat / gridSize);
+      const gridLng = Math.round(row.lng / gridSize);
+      const groupKey = `${gridLat}:${gridLng}`;
+      const current = grouped.get(groupKey) ?? [];
+
+      current.push(row);
+      grouped.set(groupKey, current);
+    }
+
+    return sortMapItems(
+      [...grouped.entries()].map(([groupKey, groupRows]) => {
+        const stats = buildMapStats(groupRows);
+        const centroid = calculateCentroid(groupRows);
+        const distinctDongCount = new Set(groupRows.map((row) => row.umdNm)).size;
+        const label =
+          distinctDongCount === 1 ? `${groupRows[0]?.umdNm ?? '근처'} 근처 거래` : '근처 거래 묶음';
+
+        return {
+          averageDealAmountManwon: stats.averageDealAmountManwon,
+          averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
+          count: groupRows.length,
+          id: `cluster:${groupKey}`,
+          label,
+          lat: centroid.lat,
+          latestDealDate: stats.latestDealDate,
+          lng: centroid.lng,
+          medianDealAmountManwon: stats.medianDealAmountManwon,
+          medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          sggNm: distinctDongCount === 1 ? (groupRows[0]?.sggNm ?? null) : null,
+          type: 'cluster',
+          umdNm: distinctDongCount === 1 ? (groupRows[0]?.umdNm ?? null) : null,
+        } satisfies NearbyMapItem;
+      }),
+    );
+  }
+
+  private buildGroupedSummaryMapItems(
+    rows: NearbyTradeRow[],
+    displayMode: Extract<NearbyDisplayMode, 'district-summary' | 'dong-summary'>,
+  ): NearbyMapItem[] {
+    const grouped = new Map<string, NearbyTradeRow[]>();
+
+    for (const row of rows) {
+      const groupKey = displayMode === 'district-summary' ? row.sggNm : `${row.sggNm}:${row.umdNm}`;
+      const current = grouped.get(groupKey) ?? [];
+
+      current.push(row);
+      grouped.set(groupKey, current);
+    }
+
+    return sortMapItems(
+      [...grouped.entries()].map(([groupKey, groupRows]) => {
+        const stats = buildMapStats(groupRows);
+        const centroid = calculateCentroid(groupRows);
+        const firstRow = groupRows[0];
+
+        if (!firstRow) {
+          throw new Error(`grouped nearby rows missing for ${groupKey}`);
+        }
+
+        return {
+          averageDealAmountManwon: stats.averageDealAmountManwon,
+          averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
+          count: groupRows.length,
+          id:
+            displayMode === 'district-summary'
+              ? `district:${firstRow.sggNm}`
+              : `dong:${firstRow.sggNm}:${firstRow.umdNm}`,
+          label: displayMode === 'district-summary' ? `반경 내 ${firstRow.sggNm}` : firstRow.umdNm,
+          lat: centroid.lat,
+          latestDealDate: stats.latestDealDate,
+          lng: centroid.lng,
+          medianDealAmountManwon: stats.medianDealAmountManwon,
+          medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          sggNm: firstRow.sggNm,
+          type: displayMode === 'district-summary' ? 'district' : 'dong',
+          umdNm: displayMode === 'district-summary' ? null : firstRow.umdNm,
+        } satisfies NearbyMapItem;
+      }),
+    );
   }
 
   async getTradeHistory(query: TradeHistoryQuery) {

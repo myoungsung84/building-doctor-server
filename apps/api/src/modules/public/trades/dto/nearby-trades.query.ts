@@ -3,6 +3,20 @@ import { z } from 'zod';
 import { booleanQuerySchema, yyyymmSchema } from '../../shared/schema-helpers';
 
 const allowedRadiusMeters = [500, 1000, 2000, 3000] as const;
+const nearbyDisplayModes = [
+  'parcel-detail',
+  'block-cluster',
+  'dong-summary',
+  'district-summary',
+] as const;
+
+const radiusMetersSchema = z.coerce
+  .number()
+  .refine(
+    (value): value is (typeof allowedRadiusMeters)[number] =>
+      allowedRadiusMeters.includes(value as (typeof allowedRadiusMeters)[number]),
+    'radiusMeters는 500, 1000, 2000, 3000 중 하나여야 합니다.',
+  );
 
 export const nearbyTradesQuerySchema = z
   .object({
@@ -29,16 +43,20 @@ export const nearbyTradesQuerySchema = z
       .number()
       .min(-180, 'lng는 -180 이상이어야 합니다.')
       .max(180, 'lng는 180 이하여야 합니다.'),
-    radiusMeters: z.coerce
-      .number()
-      .refine(
-        (value): value is (typeof allowedRadiusMeters)[number] =>
-          allowedRadiusMeters.includes(value as (typeof allowedRadiusMeters)[number]),
-        'radiusMeters는 500, 1000, 2000, 3000 중 하나여야 합니다.',
-      ),
+    displayMode: z.enum(nearbyDisplayModes).optional(),
+    radiusM: radiusMetersSchema.optional(),
+    radiusMeters: radiusMetersSchema.optional(),
     to: yyyymmSchema.optional(),
   })
   .superRefine((value, context) => {
+    if (value.radiusMeters === undefined && value.radiusM === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'radiusMeters 또는 radiusM은 필수입니다.',
+        path: ['radiusMeters'],
+      });
+    }
+
     if ((value.from && !value.to) || (!value.from && value.to)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -70,6 +88,11 @@ export const nearbyTradesQuerySchema = z
         path: ['from'],
       });
     }
-  });
+  })
+  .transform(({ radiusM, radiusMeters, ...rest }) => ({
+    ...rest,
+    radiusMeters: radiusMeters ?? radiusM ?? 500,
+  }));
 
 export type NearbyTradesQuery = z.infer<typeof nearbyTradesQuerySchema>;
+export type NearbyDisplayMode = (typeof nearbyDisplayModes)[number];
