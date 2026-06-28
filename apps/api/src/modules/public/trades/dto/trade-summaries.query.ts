@@ -1,8 +1,28 @@
 import { z } from 'zod';
 
+import { resolveSidoCodeByName } from '../../shared/administrative-regions';
 import { booleanQuerySchema, yyyymmSchema } from '../../shared/schema-helpers';
 
-const tradeSummaryLevels = ['district', 'dong'] as const;
+const tradeSummaryCanonicalLevels = ['city', 'district', 'dong'] as const;
+const tradeSummaryRequestLevels = ['city', 'sido', 'district', 'sigungu', 'dong', 'emd'] as const;
+
+type TradeSummaryRequestLevel = (typeof tradeSummaryRequestLevels)[number];
+
+export type TradeSummaryLevel = (typeof tradeSummaryCanonicalLevels)[number];
+
+export function normalizeTradeSummaryLevel(level: TradeSummaryRequestLevel): TradeSummaryLevel {
+  switch (level) {
+    case 'city':
+    case 'sido':
+      return 'city';
+    case 'district':
+    case 'sigungu':
+      return 'district';
+    case 'dong':
+    case 'emd':
+      return 'dong';
+  }
+}
 
 export const tradeSummariesQuerySchema = z
   .object({
@@ -15,7 +35,10 @@ export const tradeSummariesQuerySchema = z
     excludeShareDeals: booleanQuerySchema.default(false),
     from: yyyymmSchema.optional(),
     includeCanceled: booleanQuerySchema.default(false),
-    level: z.enum(tradeSummaryLevels),
+    level: z
+      .enum(tradeSummaryRequestLevels)
+      .transform(normalizeTradeSummaryLevel)
+      .pipe(z.enum(tradeSummaryCanonicalLevels)),
     sggCd: z
       .string()
       .regex(/^\d{5}$/, 'sggCd는 5자리 숫자여야 합니다.')
@@ -41,10 +64,30 @@ export const tradeSummariesQuerySchema = z
       return;
     }
 
-    if (value.level === 'dong' && !value.sggCd) {
+    if (value.sidoNm) {
+      const resolvedSidoCd = resolveSidoCodeByName(value.sidoNm);
+
+      if (!resolvedSidoCd) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '지원하지 않는 시도명입니다.',
+          path: ['sidoNm'],
+        });
+      }
+
+      if (value.sidoCd && resolvedSidoCd && value.sidoCd !== resolvedSidoCd) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'sidoCd와 sidoNm이 서로 일치하지 않습니다.',
+          path: ['sidoNm'],
+        });
+      }
+    }
+
+    if (value.level === 'city' && value.sggCd) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'level=dong 조회에는 sggCd가 필요합니다.',
+        message: 'level=city 조회에는 sggCd를 함께 사용할 수 없습니다.',
         path: ['sggCd'],
       });
     }
@@ -74,4 +117,3 @@ export const tradeSummariesQuerySchema = z
   });
 
 export type TradeSummariesQuery = z.infer<typeof tradeSummariesQuerySchema>;
-export type TradeSummaryLevel = (typeof tradeSummaryLevels)[number];

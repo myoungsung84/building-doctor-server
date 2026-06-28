@@ -6,6 +6,11 @@ import type { TradeHistoryQuery } from './dto/trade-history.query';
 import type { TradeSummariesQuery, TradeSummaryLevel } from './dto/trade-summaries.query';
 import { TradesRepository, type NearbyTradeRow, type TradeSummaryRow } from './trades.repository';
 import {
+  resolveSidoCodeByName,
+  resolveSidoInfoFromSggCd,
+  resolveSidoNameByCode,
+} from '../shared/administrative-regions';
+import {
   buildDistrictKey,
   buildDongKey,
   buildMarkerKey,
@@ -137,6 +142,8 @@ type TradeRegionSummaryItem = {
   parcelCount: number;
   regionCode: string;
   regionName: string;
+  sidoCd: string | null;
+  sidoNm: string | null;
   sggCd: string | null;
   sggNm: string | null;
   tradeCount: number;
@@ -376,6 +383,21 @@ export class TradesService {
       throw ApiException.notFound('조회 가능한 거래 데이터가 없습니다.');
     }
 
+    const resolvedSidoCdByName = query.sidoNm ? resolveSidoCodeByName(query.sidoNm) : null;
+
+    if (query.sidoNm && !resolvedSidoCdByName) {
+      throw ApiException.invalidQuery([{ field: 'sidoNm', reason: '지원하지 않는 시도명입니다.' }]);
+    }
+
+    if (query.sidoCd && resolvedSidoCdByName && query.sidoCd !== resolvedSidoCdByName) {
+      throw ApiException.invalidQuery([
+        { field: 'sidoNm', reason: 'sidoCd와 sidoNm이 서로 일치하지 않습니다.' },
+      ]);
+    }
+
+    const effectiveSidoCd = query.sidoCd ?? resolvedSidoCdByName ?? undefined;
+    const effectiveSidoNm =
+      resolveSidoNameByCode(effectiveSidoCd ?? null) ?? query.sidoNm?.trim() ?? null;
     const period = resolvePeriodWindow(query, bounds.fromYm, bounds.toYm);
     const rows = await this.tradesRepository.findTradeSummaryRows({
       buildingUse: query.buildingUse,
@@ -383,6 +405,7 @@ export class TradesService {
       fromDate: period.fromDate,
       includeCanceled: query.includeCanceled,
       sggCd: query.sggCd,
+      sidoCd: effectiveSidoCd,
       toDate: period.toDate,
     });
 
@@ -392,8 +415,8 @@ export class TradesService {
         excludeShareDeals: query.excludeShareDeals,
         includeCanceled: query.includeCanceled,
         sggCd: query.sggCd ?? null,
-        sidoCd: query.sidoCd ?? null,
-        sidoNm: query.sidoNm ?? null,
+        sidoCd: effectiveSidoCd ?? null,
+        sidoNm: effectiveSidoNm,
       },
       items: this.buildTradeRegionSummaryItems(query.level, rows),
       level: query.level,
@@ -675,8 +698,13 @@ export class TradesService {
     const grouped = new Map<string, TradeSummaryRow[]>();
 
     for (const row of rows) {
+      const { sidoCd } = resolveSidoInfoFromSggCd(row.sggCd);
       const groupKey =
-        level === 'district' ? buildDistrictKey(row.sggCd) : buildDongKey(row.sggCd, row.umdNm);
+        level === 'city'
+          ? (sidoCd ?? row.sggCd.slice(0, 2))
+          : level === 'district'
+            ? buildDistrictKey(row.sggCd)
+            : buildDongKey(row.sggCd, row.umdNm);
       const current = grouped.get(groupKey) ?? [];
       current.push(row);
       grouped.set(groupKey, current);
@@ -697,6 +725,34 @@ export class TradesService {
           .map((row) => buildParcelKey(row.sggCd, row.umdNm, row.jibun))
           .filter((value): value is string => value !== null),
       ).size;
+      const { sidoCd, sidoNm } = resolveSidoInfoFromSggCd(firstRow.sggCd);
+      const regionSidoCd = sidoCd ?? firstRow.sggCd.slice(0, 2);
+      const regionSidoNm = sidoNm ?? regionSidoCd;
+
+      if (level === 'city') {
+        return {
+          averageDealAmountManwon: stats.averageDealAmountManwon,
+          averagePricePerPyeongManwon: stats.averagePricePerPyeongManwon,
+          centerLat: centroid.lat,
+          centerLng: centroid.lng,
+          id: `city:${regionSidoCd}`,
+          latestContractDate,
+          level,
+          medianDealAmountManwon: stats.medianDealAmountManwon,
+          medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
+          parentRegionCode: null,
+          parentRegionName: null,
+          parcelCount,
+          regionCode: regionSidoCd,
+          regionName: regionSidoNm,
+          sidoCd: regionSidoCd,
+          sidoNm: regionSidoNm,
+          sggCd: null,
+          sggNm: null,
+          tradeCount: groupRows.length,
+          umdNm: null,
+        } satisfies TradeRegionSummaryItem;
+      }
 
       if (level === 'district') {
         return {
@@ -709,11 +765,13 @@ export class TradesService {
           level,
           medianDealAmountManwon: stats.medianDealAmountManwon,
           medianPricePerPyeongManwon: stats.medianPricePerPyeongManwon,
-          parentRegionCode: firstRow.sggCd.slice(0, 2),
-          parentRegionName: '서울특별시',
+          parentRegionCode: regionSidoCd,
+          parentRegionName: regionSidoNm,
           parcelCount,
           regionCode: firstRow.sggCd,
           regionName: firstRow.sggNm,
+          sidoCd: regionSidoCd,
+          sidoNm: regionSidoNm,
           sggCd: firstRow.sggCd,
           sggNm: firstRow.sggNm,
           tradeCount: groupRows.length,
@@ -736,6 +794,8 @@ export class TradesService {
         parcelCount,
         regionCode: buildDongKey(firstRow.sggCd, firstRow.umdNm),
         regionName: firstRow.umdNm,
+        sidoCd: regionSidoCd,
+        sidoNm: regionSidoNm,
         sggCd: firstRow.sggCd,
         sggNm: firstRow.sggNm,
         tradeCount: groupRows.length,

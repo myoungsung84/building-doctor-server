@@ -20,6 +20,7 @@ type TradeSummaryQueryInput = {
   fromDate: string;
   includeCanceled: boolean;
   sggCd?: string;
+  sidoCd?: string;
   toDate: string;
 };
 
@@ -221,6 +222,11 @@ export class TradesRepository {
     if (query.buildingUse) {
       values.push(query.buildingUse);
       conditions.push(`building_use = $${values.length}`);
+    }
+
+    if (query.sidoCd) {
+      values.push(query.sidoCd);
+      conditions.push(`LEFT(sgg_cd, 2) = $${values.length}`);
     }
 
     if (query.sggCd) {

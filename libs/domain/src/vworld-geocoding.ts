@@ -77,6 +77,10 @@ export function classifyVWorldHttpFailure(
     return 'transient';
   }
 
+  if (matchesPattern(TRANSIENT_ERROR_PATTERNS, statusText)) {
+    return 'transient';
+  }
+
   return 'permanent';
 }
 
