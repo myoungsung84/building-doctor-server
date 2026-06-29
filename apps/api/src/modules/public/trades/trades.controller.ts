@@ -8,6 +8,7 @@ import {
   parseQuery,
   type RequestWithContext,
 } from '@app/api';
+import { groupChildrenQuerySchema } from './dto/group-children.query';
 import { mapTradesQuerySchema } from './dto/map-trades.query';
 import { nearbyTradesQuerySchema } from './dto/nearby-trades.query';
 import { tradeHistoryQuerySchema } from './dto/trade-history.query';
@@ -40,6 +41,24 @@ export class TradesController {
     const result = await this.tradesService.getTradeHistory(parsedQuery);
 
     return apiSuccess(result, createApiMeta({ requestId: request.requestId ?? 'req_unknown' }));
+  }
+
+  @Get('group-children')
+  async getGroupChildren(
+    @Req() request: RequestWithContext,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const parsedQuery = parseQuery(groupChildrenQuerySchema, query);
+    const result = await this.tradesService.getGroupChildren(parsedQuery);
+
+    return apiSuccess(
+      result,
+      createApiMeta({
+        count: result.items.length,
+        limit: result.pageSize,
+        requestId: request.requestId ?? 'req_unknown',
+      }),
+    );
   }
 
   @Get('map')

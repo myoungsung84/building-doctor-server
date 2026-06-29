@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Pool } from 'pg';
 
 import { PG_POOL } from '@app/db';
+import type { CommonGroupChildrenSort, ParcelGroupChildrenSort } from './dto/group-children.query';
 
 type NearbyTradeQueryInput = {
   buildingUse?: string;
@@ -35,6 +36,37 @@ type MapBoundsQueryInput = {
   toDate: string;
   west: number;
 };
+
+type GroupChildrenBaseQueryInput = {
+  excludeShareDeal: boolean;
+  fromDate: string;
+  includeCanceled: boolean;
+  page: number;
+  pageSize: number;
+  toDate: string;
+};
+
+type DistrictChildrenQueryInput = GroupChildrenBaseQueryInput & {
+  sidoCd: string;
+  sort: CommonGroupChildrenSort;
+};
+
+type DistrictChildrenCountQueryInput = Omit<DistrictChildrenQueryInput, 'page' | 'pageSize' | 'sort'>;
+
+type DongChildrenQueryInput = GroupChildrenBaseQueryInput & {
+  sggCd: string;
+  sort: CommonGroupChildrenSort;
+};
+
+type DongChildrenCountQueryInput = Omit<DongChildrenQueryInput, 'page' | 'pageSize' | 'sort'>;
+
+type ParcelChildrenQueryInput = GroupChildrenBaseQueryInput & {
+  sggCd: string;
+  sort: ParcelGroupChildrenSort;
+  umdNm: string;
+};
+
+type ParcelChildrenCountQueryInput = Omit<ParcelChildrenQueryInput, 'page' | 'pageSize' | 'sort'>;
 
 export type NearbyTradeRow = {
   buildingAreaSqm: number | null;
@@ -150,6 +182,53 @@ export type MapCitySummaryRow = {
   tradeCount: number;
 };
 
+export type DistrictGroupChildRow = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  lat: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  parcelCount: number;
+  sggCd: string;
+  sggName: string;
+  tradeCount: number;
+};
+
+export type DongGroupChildRow = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  lat: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  parcelCount: number;
+  sggCd: string;
+  sggName: string;
+  tradeCount: number;
+  umdNm: string;
+};
+
+export type ParcelGroupChildRow = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  buildingArea: number | null;
+  floor: number | null;
+  jibun: string;
+  lat: number;
+  latestDealAmount: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  sggCd: string;
+  tradeCount: number;
+  tradeId: number;
+  umdNm: string;
+};
+
 export type DataStatusRow = {
   failed: number;
   fromYm: string | null;
@@ -197,6 +276,118 @@ export class TradesRepository {
     }
 
     return { conditions, values };
+  }
+
+  private buildGroupChildrenWhereClause(
+    query:
+      | DistrictChildrenCountQueryInput
+      | DongChildrenCountQueryInput
+      | ParcelChildrenCountQueryInput,
+  ) {
+    const values: Array<string | number> = [query.fromDate, query.toDate];
+    const conditions = [
+      'is_jibun_masked = false',
+      'location IS NOT NULL',
+      'lat IS NOT NULL',
+      'lng IS NOT NULL',
+      'deal_date BETWEEN $1::date AND $2::date',
+    ];
+
+    if (!query.includeCanceled) {
+      conditions.push('is_canceled = false');
+    }
+
+    if (query.excludeShareDeal) {
+      conditions.push('is_share_deal = false');
+    }
+
+    if ('sidoCd' in query) {
+      values.push(query.sidoCd);
+      conditions.push(`LEFT(sgg_cd, 2) = $${values.length}`);
+    }
+
+    if ('sggCd' in query) {
+      values.push(query.sggCd);
+      conditions.push(`sgg_cd = $${values.length}`);
+    }
+
+    if ('umdNm' in query) {
+      values.push(query.umdNm);
+      conditions.push(`umd_nm = $${values.length}`);
+      conditions.push("jibun IS NOT NULL");
+      conditions.push("BTRIM(jibun) <> ''");
+    }
+
+    return { conditions, values };
+  }
+
+  private resolveDistrictChildrenSortClause(sort: CommonGroupChildrenSort): string {
+    switch (sort) {
+      case 'parcelCount_desc':
+        return `"parcelCount" DESC, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+      case 'avgDealAmount_desc':
+        return `"avgDealAmount" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+      case 'medianDealAmount_desc':
+        return `"medianDealAmount" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+      case 'avgPricePerPyeong_desc':
+        return `"avgPricePerPyeong" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+      case 'medianPricePerPyeong_desc':
+        return `"medianPricePerPyeong" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+      case 'latestDealDate_desc':
+        return `"latestDealDate" DESC, "tradeCount" DESC, "sggCd" ASC`;
+      case 'tradeCount_desc':
+      default:
+        return `"tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC`;
+    }
+  }
+
+  private resolveDongChildrenSortClause(sort: CommonGroupChildrenSort): string {
+    switch (sort) {
+      case 'parcelCount_desc':
+        return `"parcelCount" DESC, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'avgDealAmount_desc':
+        return `"avgDealAmount" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'medianDealAmount_desc':
+        return `"medianDealAmount" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'avgPricePerPyeong_desc':
+        return `"avgPricePerPyeong" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'medianPricePerPyeong_desc':
+        return `"medianPricePerPyeong" DESC NULLS LAST, "tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'latestDealDate_desc':
+        return `"latestDealDate" DESC, "tradeCount" DESC, "sggCd" ASC, "umdNm" ASC`;
+      case 'tradeCount_desc':
+      default:
+        return `"tradeCount" DESC, "latestDealDate" DESC, "sggCd" ASC, "umdNm" ASC`;
+    }
+  }
+
+  private resolveParcelChildrenSortClause(sort: ParcelGroupChildrenSort): string {
+    switch (sort) {
+      case 'tradeCount_desc':
+        return `"tradeCount" DESC, "latestDealDate" DESC, "latestDealAmount" DESC, "jibun" ASC`;
+      case 'parcelCount_desc':
+        return `"latestDealDate" DESC, "tradeCount" DESC, "latestDealAmount" DESC, "jibun" ASC`;
+      case 'avgDealAmount_desc':
+        return `"avgDealAmount" DESC NULLS LAST, "latestDealDate" DESC, "tradeCount" DESC, "jibun" ASC`;
+      case 'medianDealAmount_desc':
+        return `"medianDealAmount" DESC NULLS LAST, "latestDealDate" DESC, "tradeCount" DESC, "jibun" ASC`;
+      case 'avgPricePerPyeong_desc':
+        return `"avgPricePerPyeong" DESC NULLS LAST, "latestDealDate" DESC, "tradeCount" DESC, "jibun" ASC`;
+      case 'medianPricePerPyeong_desc':
+        return `"medianPricePerPyeong" DESC NULLS LAST, "latestDealDate" DESC, "tradeCount" DESC, "jibun" ASC`;
+      case 'latestDealAmount_desc':
+        return `"latestDealAmount" DESC, "latestDealDate" DESC, "tradeCount" DESC, "jibun" ASC`;
+      case 'latestDealDate_desc':
+      default:
+        return `"latestDealDate" DESC, "tradeCount" DESC, "latestDealAmount" DESC, "jibun" ASC`;
+    }
+  }
+
+  private getPaginationParams(page: number, pageSize: number) {
+    return {
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    };
   }
 
   async findDataStatus(): Promise<DataStatusRow> {
@@ -589,6 +780,368 @@ export class TradesRepository {
       ...row,
       dealAmountManwon: Number(row.dealAmountManwon),
     }));
+  }
+
+  async countDistrictChildren(query: DistrictChildrenCountQueryInput): Promise<number> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const result = await this.pool.query<{ totalCount: number }>(
+      `
+        WITH grouped AS (
+          SELECT sgg_cd
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+          GROUP BY sgg_cd
+        )
+        SELECT COUNT(*)::int AS "totalCount"
+        FROM grouped
+      `,
+      values,
+    );
+
+    return Number(result.rows[0]?.totalCount ?? 0);
+  }
+
+  async findDistrictChildren(query: DistrictChildrenQueryInput): Promise<DistrictGroupChildRow[]> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const orderBy = this.resolveDistrictChildrenSortClause(query.sort);
+    const { limit, offset } = this.getPaginationParams(query.page, query.pageSize);
+
+    values.push(limit, offset);
+
+    const result = await this.pool.query<DistrictGroupChildRow>(
+      `
+        WITH base AS (
+          SELECT
+            sgg_cd,
+            sgg_nm,
+            umd_nm,
+            jibun,
+            lat::float8 AS lat,
+            lng::float8 AS lng,
+            deal_date,
+            deal_amount_manwon,
+            CASE
+              WHEN building_area IS NOT NULL AND building_area > 0
+                THEN deal_amount_manwon::numeric * 3.305785 / building_area
+              ELSE NULL
+            END AS price_per_pyeong
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+        ),
+        grouped AS (
+          SELECT
+            sgg_cd AS "sggCd",
+            MIN(sgg_nm) AS "sggName",
+            COUNT(*)::int AS "tradeCount",
+            COUNT(
+              DISTINCT CASE
+                WHEN jibun IS NOT NULL AND BTRIM(jibun) <> ''
+                  THEN CONCAT_WS(':', sgg_cd, umd_nm, jibun)
+                ELSE NULL
+              END
+            )::int AS "parcelCount",
+            ROUND(AVG(deal_amount_manwon))::int8 AS "avgDealAmount",
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY deal_amount_manwon))::int8 AS "medianDealAmount",
+            ROUND(AVG(price_per_pyeong), 2) AS "avgPricePerPyeong",
+            ROUND(
+              (
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_pyeong)
+                FILTER (WHERE price_per_pyeong IS NOT NULL)
+              )::numeric,
+              2
+            ) AS "medianPricePerPyeong",
+            MAX(deal_date)::text AS "latestDealDate",
+            AVG(lat)::float8 AS lat,
+            AVG(lng)::float8 AS lng
+          FROM base
+          GROUP BY sgg_cd
+        )
+        SELECT
+          "sggCd",
+          "sggName",
+          "tradeCount",
+          "parcelCount",
+          "avgDealAmount",
+          "medianDealAmount",
+          "avgPricePerPyeong",
+          "medianPricePerPyeong",
+          "latestDealDate",
+          lat,
+          lng
+        FROM grouped
+        ORDER BY ${orderBy}
+        LIMIT $${values.length - 1}
+        OFFSET $${values.length}
+      `,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      ...row,
+      avgDealAmount: row.avgDealAmount === null ? null : Number(row.avgDealAmount),
+      avgPricePerPyeong:
+        row.avgPricePerPyeong === null ? null : Number(row.avgPricePerPyeong),
+      medianDealAmount: row.medianDealAmount === null ? null : Number(row.medianDealAmount),
+      medianPricePerPyeong:
+        row.medianPricePerPyeong === null ? null : Number(row.medianPricePerPyeong),
+      parcelCount: Number(row.parcelCount),
+      tradeCount: Number(row.tradeCount),
+    }));
+  }
+
+  async countDongChildren(query: DongChildrenCountQueryInput): Promise<number> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const result = await this.pool.query<{ totalCount: number }>(
+      `
+        WITH grouped AS (
+          SELECT sgg_cd, umd_nm
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+          GROUP BY sgg_cd, umd_nm
+        )
+        SELECT COUNT(*)::int AS "totalCount"
+        FROM grouped
+      `,
+      values,
+    );
+
+    return Number(result.rows[0]?.totalCount ?? 0);
+  }
+
+  async findDongChildren(query: DongChildrenQueryInput): Promise<DongGroupChildRow[]> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const orderBy = this.resolveDongChildrenSortClause(query.sort);
+    const { limit, offset } = this.getPaginationParams(query.page, query.pageSize);
+
+    values.push(limit, offset);
+
+    const result = await this.pool.query<DongGroupChildRow>(
+      `
+        WITH base AS (
+          SELECT
+            sgg_cd,
+            sgg_nm,
+            umd_nm,
+            jibun,
+            lat::float8 AS lat,
+            lng::float8 AS lng,
+            deal_date,
+            deal_amount_manwon,
+            CASE
+              WHEN building_area IS NOT NULL AND building_area > 0
+                THEN deal_amount_manwon::numeric * 3.305785 / building_area
+              ELSE NULL
+            END AS price_per_pyeong
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+        ),
+        grouped AS (
+          SELECT
+            sgg_cd AS "sggCd",
+            MIN(sgg_nm) AS "sggName",
+            umd_nm AS "umdNm",
+            COUNT(*)::int AS "tradeCount",
+            COUNT(
+              DISTINCT CASE
+                WHEN jibun IS NOT NULL AND BTRIM(jibun) <> ''
+                  THEN CONCAT_WS(':', sgg_cd, umd_nm, jibun)
+                ELSE NULL
+              END
+            )::int AS "parcelCount",
+            ROUND(AVG(deal_amount_manwon))::int8 AS "avgDealAmount",
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY deal_amount_manwon))::int8 AS "medianDealAmount",
+            ROUND(AVG(price_per_pyeong), 2) AS "avgPricePerPyeong",
+            ROUND(
+              (
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_pyeong)
+                FILTER (WHERE price_per_pyeong IS NOT NULL)
+              )::numeric,
+              2
+            ) AS "medianPricePerPyeong",
+            MAX(deal_date)::text AS "latestDealDate",
+            AVG(lat)::float8 AS lat,
+            AVG(lng)::float8 AS lng
+          FROM base
+          GROUP BY sgg_cd, umd_nm
+        )
+        SELECT
+          "sggCd",
+          "sggName",
+          "umdNm",
+          "tradeCount",
+          "parcelCount",
+          "avgDealAmount",
+          "medianDealAmount",
+          "avgPricePerPyeong",
+          "medianPricePerPyeong",
+          "latestDealDate",
+          lat,
+          lng
+        FROM grouped
+        ORDER BY ${orderBy}
+        LIMIT $${values.length - 1}
+        OFFSET $${values.length}
+      `,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      ...row,
+      avgDealAmount: row.avgDealAmount === null ? null : Number(row.avgDealAmount),
+      avgPricePerPyeong:
+        row.avgPricePerPyeong === null ? null : Number(row.avgPricePerPyeong),
+      medianDealAmount: row.medianDealAmount === null ? null : Number(row.medianDealAmount),
+      medianPricePerPyeong:
+        row.medianPricePerPyeong === null ? null : Number(row.medianPricePerPyeong),
+      parcelCount: Number(row.parcelCount),
+      tradeCount: Number(row.tradeCount),
+    }));
+  }
+
+  async countParcelChildren(query: ParcelChildrenCountQueryInput): Promise<number> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const result = await this.pool.query<{ totalCount: number }>(
+      `
+        WITH grouped AS (
+          SELECT sgg_cd, umd_nm, jibun
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+          GROUP BY sgg_cd, umd_nm, jibun
+        )
+        SELECT COUNT(*)::int AS "totalCount"
+        FROM grouped
+      `,
+      values,
+    );
+
+    return Number(result.rows[0]?.totalCount ?? 0);
+  }
+
+  async findParcelChildren(query: ParcelChildrenQueryInput): Promise<ParcelGroupChildRow[]> {
+    const { conditions, values } = this.buildGroupChildrenWhereClause(query);
+    const orderBy = this.resolveParcelChildrenSortClause(query.sort);
+    const { limit, offset } = this.getPaginationParams(query.page, query.pageSize);
+
+    values.push(limit, offset);
+
+    const result = await this.pool.query<ParcelGroupChildRow>(
+      `
+        WITH base AS (
+          SELECT
+            id,
+            sgg_cd,
+            umd_nm,
+            jibun,
+            lat::float8 AS lat,
+            lng::float8 AS lng,
+            deal_date,
+            deal_amount_manwon,
+            building_area::float8 AS building_area,
+            floor,
+            CASE
+              WHEN building_area IS NOT NULL AND building_area > 0
+                THEN deal_amount_manwon::numeric * 3.305785 / building_area
+              ELSE NULL
+            END AS price_per_pyeong
+          FROM non_residential_trades
+          WHERE ${conditions.join('\n            AND ')}
+        ),
+        latest AS (
+          SELECT
+            id,
+            sgg_cd,
+            umd_nm,
+            jibun,
+            deal_date,
+            deal_amount_manwon,
+            building_area,
+            floor
+          FROM (
+            SELECT
+              base.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY sgg_cd, umd_nm, jibun
+                ORDER BY deal_date DESC, id DESC
+              ) AS rn
+            FROM base
+          ) ranked
+          WHERE rn = 1
+        ),
+        grouped AS (
+          SELECT
+            sgg_cd AS "sggCd",
+            umd_nm AS "umdNm",
+            jibun,
+            COUNT(*)::int AS "tradeCount",
+            ROUND(AVG(deal_amount_manwon))::int8 AS "avgDealAmount",
+            ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY deal_amount_manwon))::int8 AS "medianDealAmount",
+            ROUND(AVG(price_per_pyeong), 2) AS "avgPricePerPyeong",
+            ROUND(
+              (
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_pyeong)
+                FILTER (WHERE price_per_pyeong IS NOT NULL)
+              )::numeric,
+              2
+            ) AS "medianPricePerPyeong",
+            MAX(deal_date)::text AS "latestDealDate",
+            AVG(lat)::float8 AS lat,
+            AVG(lng)::float8 AS lng
+          FROM base
+          GROUP BY sgg_cd, umd_nm, jibun
+        )
+        SELECT
+          grouped."sggCd",
+          grouped."umdNm",
+          grouped.jibun,
+          grouped."tradeCount",
+          grouped."avgDealAmount",
+          grouped."medianDealAmount",
+          grouped."avgPricePerPyeong",
+          grouped."medianPricePerPyeong",
+          grouped."latestDealDate",
+          grouped.lat,
+          grouped.lng,
+          latest.id AS "tradeId",
+          latest.deal_amount_manwon::int8 AS "latestDealAmount",
+          latest.building_area AS "buildingArea",
+          latest.floor
+        FROM grouped
+        JOIN latest
+          ON latest.sgg_cd = grouped."sggCd"
+         AND latest.umd_nm = grouped."umdNm"
+         AND latest.jibun = grouped.jibun
+        ORDER BY ${orderBy}
+        LIMIT $${values.length - 1}
+        OFFSET $${values.length}
+      `,
+      values,
+    );
+
+    return result.rows.map((row) => ({
+      ...row,
+      avgDealAmount: row.avgDealAmount === null ? null : Number(row.avgDealAmount),
+      avgPricePerPyeong:
+        row.avgPricePerPyeong === null ? null : Number(row.avgPricePerPyeong),
+      latestDealAmount: Number(row.latestDealAmount),
+      medianDealAmount: row.medianDealAmount === null ? null : Number(row.medianDealAmount),
+      medianPricePerPyeong:
+        row.medianPricePerPyeong === null ? null : Number(row.medianPricePerPyeong),
+      tradeCount: Number(row.tradeCount),
+      tradeId: Number(row.tradeId),
+    }));
+  }
+
+  async findDistrictNameBySggCd(sggCd: string): Promise<string | null> {
+    const result = await this.pool.query<{ label: string | null }>(
+      `
+        SELECT MIN(sgg_nm) AS label
+        FROM non_residential_trades
+        WHERE sgg_cd = $1
+      `,
+      [sggCd],
+    );
+
+    return result.rows[0]?.label ?? null;
   }
 
   async findPeriodBounds(): Promise<PeriodBounds> {

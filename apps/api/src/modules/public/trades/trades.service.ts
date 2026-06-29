@@ -1,11 +1,21 @@
 import { Injectable } from '@nestjs/common';
 
 import { ApiException } from '@app/api';
+import type {
+  CommonGroupChildrenSort,
+  GroupChildType,
+  GroupChildrenQuery,
+  GroupChildrenSort,
+  ParcelGroupChildrenSort,
+} from './dto/group-children.query';
 import type { MapDisplayMode, MapTradesQuery } from './dto/map-trades.query';
 import type { NearbyDisplayMode, NearbyTradesQuery } from './dto/nearby-trades.query';
 import type { TradeHistoryQuery } from './dto/trade-history.query';
 import type { TradeSummariesQuery, TradeSummaryLevel } from './dto/trade-summaries.query';
 import {
+  type DistrictGroupChildRow,
+  type DongGroupChildRow,
+  type ParcelGroupChildRow,
   TradesRepository,
   type MapCitySummaryRow,
   type MapDistrictSummaryRow,
@@ -174,6 +184,84 @@ type TradeSummariesResult = {
     from: string;
     to: string;
   };
+};
+
+type GroupChildrenParent = {
+  label: string;
+  sggCd: string | null;
+  sidoCd: string | null;
+  type: 'city' | 'district' | 'dong';
+  umdNm: string | null;
+};
+
+type DistrictGroupChildItem = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  key: string;
+  label: string;
+  lat: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  parcelCount: number;
+  sggCd: string;
+  sidoCd: string;
+  tradeCount: number;
+  type: 'district';
+};
+
+type DongGroupChildItem = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  key: string;
+  label: string;
+  lat: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  parcelCount: number;
+  sggCd: string;
+  sidoCd: string;
+  tradeCount: number;
+  type: 'dong';
+  umdNm: string;
+};
+
+type ParcelGroupChildItem = {
+  avgDealAmount: number | null;
+  avgPricePerPyeong: number | null;
+  buildingArea: number | null;
+  floor: number | null;
+  jibun: string;
+  key: string;
+  label: string;
+  lat: number;
+  latestDealAmount: number;
+  latestDealDate: string;
+  lng: number;
+  medianDealAmount: number | null;
+  medianPricePerPyeong: number | null;
+  sggCd: string;
+  sidoCd: string;
+  tradeCount: number;
+  tradeId: string;
+  type: 'parcel';
+  umdNm: string;
+};
+
+type GroupChildrenItem = DistrictGroupChildItem | DongGroupChildItem | ParcelGroupChildItem;
+
+type GroupChildrenResult = {
+  items: GroupChildrenItem[];
+  level: GroupChildType;
+  page: number;
+  pageSize: number;
+  parent: GroupChildrenParent;
+  sort: GroupChildrenSort;
+  totalCount: number;
+  totalPages: number;
 };
 
 type MapBounds = {
@@ -545,6 +633,114 @@ export class TradesService {
         to: period.toYm,
       },
     };
+  }
+
+  async getGroupChildren(query: GroupChildrenQuery): Promise<GroupChildrenResult> {
+    const bounds = await this.tradesRepository.findPeriodBounds();
+
+    if (!bounds.fromYm || !bounds.toYm) {
+      throw ApiException.notFound('조회 가능한 거래 데이터가 없습니다.');
+    }
+
+    const period = resolvePeriodWindow(query, bounds.fromYm, bounds.toYm);
+    const parent = await this.buildGroupChildrenParent(query);
+    const baseQuery = {
+      excludeShareDeal: query.excludeShareDeal,
+      fromDate: period.fromDate,
+      includeCanceled: query.includeCanceled,
+      page: query.page,
+      pageSize: query.pageSize,
+      toDate: period.toDate,
+    };
+
+    switch (query.childType) {
+      case 'district': {
+        if (!query.sidoCd) {
+          throw ApiException.invalidQuery([
+            { field: 'sidoCd', reason: 'parentType=city 조회에는 sidoCd가 필요합니다.' },
+          ]);
+        }
+
+        const totalCount = await this.tradesRepository.countDistrictChildren({
+          ...baseQuery,
+          sidoCd: query.sidoCd,
+        });
+        const rows = await this.tradesRepository.findDistrictChildren({
+          ...baseQuery,
+          sidoCd: query.sidoCd,
+          sort: query.sort as CommonGroupChildrenSort,
+        });
+
+        return {
+          items: rows.map((row) => this.buildDistrictGroupChildItem(row)),
+          level: query.childType,
+          page: query.page,
+          pageSize: query.pageSize,
+          parent,
+          sort: query.sort,
+          totalCount,
+          totalPages: Math.ceil(totalCount / query.pageSize),
+        };
+      }
+      case 'dong': {
+        if (!query.sggCd) {
+          throw ApiException.invalidQuery([
+            { field: 'sggCd', reason: 'parentType=district 조회에는 sggCd가 필요합니다.' },
+          ]);
+        }
+
+        const totalCount = await this.tradesRepository.countDongChildren({
+          ...baseQuery,
+          sggCd: query.sggCd,
+        });
+        const rows = await this.tradesRepository.findDongChildren({
+          ...baseQuery,
+          sggCd: query.sggCd,
+          sort: query.sort as CommonGroupChildrenSort,
+        });
+
+        return {
+          items: rows.map((row) => this.buildDongGroupChildItem(row)),
+          level: query.childType,
+          page: query.page,
+          pageSize: query.pageSize,
+          parent,
+          sort: query.sort,
+          totalCount,
+          totalPages: Math.ceil(totalCount / query.pageSize),
+        };
+      }
+      case 'parcel': {
+        if (!query.sggCd || !query.umdNm) {
+          throw ApiException.invalidQuery([
+            { field: 'sggCd', reason: 'parentType=dong 조회에는 sggCd와 umdNm이 필요합니다.' },
+          ]);
+        }
+
+        const totalCount = await this.tradesRepository.countParcelChildren({
+          ...baseQuery,
+          sggCd: query.sggCd,
+          umdNm: query.umdNm,
+        });
+        const rows = await this.tradesRepository.findParcelChildren({
+          ...baseQuery,
+          sggCd: query.sggCd,
+          sort: query.sort as ParcelGroupChildrenSort,
+          umdNm: query.umdNm,
+        });
+
+        return {
+          items: rows.map((row) => this.buildParcelGroupChildItem(row)),
+          level: query.childType,
+          page: query.page,
+          pageSize: query.pageSize,
+          parent,
+          sort: query.sort,
+          totalCount,
+          totalPages: Math.ceil(totalCount / query.pageSize),
+        };
+      }
+    }
   }
 
   async getMapTrades(query: MapTradesQuery): Promise<MapTradesResult> {
@@ -1043,6 +1239,113 @@ export class TradesService {
     });
 
     return sortRegionSummaryItems(items);
+  }
+
+  private async buildGroupChildrenParent(query: GroupChildrenQuery): Promise<GroupChildrenParent> {
+    switch (query.parentType) {
+      case 'city':
+        return {
+          label: resolveSidoNameByCode(query.sidoCd ?? null) ?? query.sidoCd ?? '',
+          sggCd: null,
+          sidoCd: query.sidoCd ?? null,
+          type: 'city',
+          umdNm: null,
+        };
+      case 'district': {
+        const label = query.sggCd
+          ? ((await this.tradesRepository.findDistrictNameBySggCd(query.sggCd)) ?? query.sggCd)
+          : '';
+        const { sidoCd } = resolveSidoInfoFromSggCd(query.sggCd);
+
+        return {
+          label,
+          sggCd: query.sggCd ?? null,
+          sidoCd,
+          type: 'district',
+          umdNm: null,
+        };
+      }
+      case 'dong': {
+        const { sidoCd } = resolveSidoInfoFromSggCd(query.sggCd);
+
+        return {
+          label: query.umdNm ?? '',
+          sggCd: query.sggCd ?? null,
+          sidoCd,
+          type: 'dong',
+          umdNm: query.umdNm ?? null,
+        };
+      }
+    }
+  }
+
+  private buildDistrictGroupChildItem(row: DistrictGroupChildRow): DistrictGroupChildItem {
+    const { sidoCd } = resolveSidoInfoFromSggCd(row.sggCd);
+
+    return {
+      avgDealAmount: row.avgDealAmount,
+      avgPricePerPyeong: row.avgPricePerPyeong,
+      key: `district:${row.sggCd}`,
+      label: row.sggName,
+      lat: row.lat,
+      latestDealDate: row.latestDealDate,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      medianPricePerPyeong: row.medianPricePerPyeong,
+      parcelCount: row.parcelCount,
+      sggCd: row.sggCd,
+      sidoCd: sidoCd ?? row.sggCd.slice(0, 2),
+      tradeCount: row.tradeCount,
+      type: 'district',
+    };
+  }
+
+  private buildDongGroupChildItem(row: DongGroupChildRow): DongGroupChildItem {
+    const { sidoCd } = resolveSidoInfoFromSggCd(row.sggCd);
+
+    return {
+      avgDealAmount: row.avgDealAmount,
+      avgPricePerPyeong: row.avgPricePerPyeong,
+      key: `dong:${buildDongKey(row.sggCd, row.umdNm)}`,
+      label: row.umdNm,
+      lat: row.lat,
+      latestDealDate: row.latestDealDate,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      medianPricePerPyeong: row.medianPricePerPyeong,
+      parcelCount: row.parcelCount,
+      sggCd: row.sggCd,
+      sidoCd: sidoCd ?? row.sggCd.slice(0, 2),
+      tradeCount: row.tradeCount,
+      type: 'dong',
+      umdNm: row.umdNm,
+    };
+  }
+
+  private buildParcelGroupChildItem(row: ParcelGroupChildRow): ParcelGroupChildItem {
+    const { sidoCd } = resolveSidoInfoFromSggCd(row.sggCd);
+
+    return {
+      avgDealAmount: row.avgDealAmount,
+      avgPricePerPyeong: row.avgPricePerPyeong,
+      buildingArea: row.buildingArea,
+      floor: row.floor,
+      jibun: row.jibun,
+      key: `parcel:${buildParcelKey(row.sggCd, row.umdNm, row.jibun) ?? `${row.sggCd}:${row.umdNm}:${row.jibun}`}`,
+      label: `${row.umdNm} ${row.jibun}`,
+      lat: row.lat,
+      latestDealAmount: row.latestDealAmount,
+      latestDealDate: row.latestDealDate,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      medianPricePerPyeong: row.medianPricePerPyeong,
+      sggCd: row.sggCd,
+      sidoCd: sidoCd ?? row.sggCd.slice(0, 2),
+      tradeCount: row.tradeCount,
+      tradeId: String(row.tradeId),
+      type: 'parcel',
+      umdNm: row.umdNm,
+    };
   }
 
   private buildCitySummaryMapItem(row: MapCitySummaryRow): MapCitySummaryItem {
