@@ -1,10 +1,19 @@
 import { Injectable } from '@nestjs/common';
 
 import { ApiException } from '@app/api';
+import type { MapDisplayMode, MapTradesQuery } from './dto/map-trades.query';
 import type { NearbyDisplayMode, NearbyTradesQuery } from './dto/nearby-trades.query';
 import type { TradeHistoryQuery } from './dto/trade-history.query';
 import type { TradeSummariesQuery, TradeSummaryLevel } from './dto/trade-summaries.query';
-import { TradesRepository, type NearbyTradeRow, type TradeSummaryRow } from './trades.repository';
+import {
+  TradesRepository,
+  type MapCitySummaryRow,
+  type MapDistrictSummaryRow,
+  type MapDongSummaryRow,
+  type MapParcelTradeRow,
+  type NearbyTradeRow,
+  type TradeSummaryRow,
+} from './trades.repository';
 import {
   resolveSidoCodeByName,
   resolveSidoInfoFromSggCd,
@@ -167,6 +176,90 @@ type TradeSummariesResult = {
   };
 };
 
+type MapBounds = {
+  east: number;
+  north: number;
+  south: number;
+  west: number;
+};
+
+type MapParcelDetailItem = {
+  address: string;
+  avgDealAmount: number | null;
+  buildingArea: number | null;
+  buildingUse: string | null;
+  dealAmount: number;
+  dealDate: string;
+  floor: number | null;
+  isCanceled: boolean;
+  isShareDeal: boolean;
+  jibun: string;
+  key: string;
+  lat: number;
+  latestBuildingArea: number | null;
+  latestDealAmount: number;
+  latestDealDate: string;
+  latestFloor: number | null;
+  lng: number;
+  medianDealAmount: number | null;
+  sggCd: string;
+  tradeCount: number;
+  tradeId: string;
+  type: 'parcel-detail';
+  umdNm: string;
+};
+
+type MapDongSummaryItem = {
+  avgDealAmount: number | null;
+  key: string;
+  lat: number;
+  lng: number;
+  medianDealAmount: number | null;
+  sggCd: string;
+  tradeCount: number;
+  type: 'dong-summary';
+  umdNm: string;
+};
+
+type MapDistrictSummaryItem = {
+  avgDealAmount: number | null;
+  key: string;
+  lat: number;
+  lng: number;
+  medianDealAmount: number | null;
+  sggCd: string;
+  sggName: string;
+  tradeCount: number;
+  type: 'district-summary';
+};
+
+type MapCitySummaryItem = {
+  avgDealAmount: number | null;
+  key: string;
+  lat: number;
+  lng: number;
+  medianDealAmount: number | null;
+  sidoCd: string;
+  sidoName: string;
+  tradeCount: number;
+  type: 'city-summary';
+};
+
+type MapTradeItem =
+  | MapCitySummaryItem
+  | MapDistrictSummaryItem
+  | MapDongSummaryItem
+  | MapParcelDetailItem;
+
+type MapTradesResult = {
+  bounds: MapBounds;
+  count: number;
+  displayMode: MapDisplayMode;
+  items: MapTradeItem[];
+  limit: number;
+  zoom?: number;
+};
+
 function average(values: number[]): number | null {
   if (values.length === 0) {
     return null;
@@ -250,6 +343,13 @@ const DISPLAY_MODE_LIMITS: Record<NearbyDisplayMode, number> = {
   'parcel-detail': 300,
 };
 
+const MAP_DISPLAY_MODE_LIMITS: Record<MapDisplayMode, { default: number; max: number }> = {
+  'city-summary': { default: 50, max: 100 },
+  'district-summary': { default: 100, max: 150 },
+  'dong-summary': { default: 200, max: 300 },
+  'parcel-detail': { default: 300, max: 500 },
+};
+
 function resolveDisplayMode(query: NearbyTradesQuery): NearbyDisplayMode {
   if (query.displayMode) {
     return query.displayMode;
@@ -272,6 +372,26 @@ function resolveDisplayMode(query: NearbyTradesQuery): NearbyDisplayMode {
 
 function resolveMapItemsLimit(displayMode: NearbyDisplayMode, requestedLimit: number): number {
   return Math.min(requestedLimit, DISPLAY_MODE_LIMITS[displayMode]);
+}
+
+function resolveMapTradesLimit(displayMode: MapDisplayMode, requestedLimit?: number): number {
+  const policy = MAP_DISPLAY_MODE_LIMITS[displayMode];
+
+  if (requestedLimit === undefined || !Number.isFinite(requestedLimit) || requestedLimit < 1) {
+    return policy.default;
+  }
+
+  return Math.min(Math.trunc(requestedLimit), policy.max);
+}
+
+function buildMapTradeAddress(sggCd: string, sggNm: string, umdNm: string, jibun: string): string {
+  const { sidoNm } = resolveSidoInfoFromSggCd(sggCd);
+
+  return [sidoNm, sggNm, umdNm, jibun].filter((value) => Boolean(value && value.trim())).join(' ');
+}
+
+function buildParcelDetailKey(row: MapParcelTradeRow): string {
+  return `parcel:${buildParcelKey(row.sggCd, row.umdNm, row.jibun) ?? `${row.sggCd}:${row.umdNm}:${row.jibun}`}`;
 }
 
 function buildUniqueAddressKey(row: TradeAnalyticsRow): string {
@@ -424,6 +544,125 @@ export class TradesService {
         from: period.fromYm,
         to: period.toYm,
       },
+    };
+  }
+
+  async getMapTrades(query: MapTradesQuery): Promise<MapTradesResult> {
+    const bounds = await this.tradesRepository.findPeriodBounds();
+
+    if (!bounds.fromYm || !bounds.toYm) {
+      throw ApiException.notFound('조회 가능한 거래 데이터가 없습니다.');
+    }
+
+    const period = resolvePeriodWindow(query, bounds.fromYm, bounds.toYm);
+    const limit = resolveMapTradesLimit(query.displayMode, query.limit);
+    const mapBounds = {
+      east: query.east,
+      north: query.north,
+      south: query.south,
+      west: query.west,
+    } satisfies MapBounds;
+
+    let items: MapTradeItem[] = [];
+
+    switch (query.displayMode) {
+      case 'parcel-detail': {
+        const rows = await this.tradesRepository.findParcelTradesInBounds({
+          east: query.east,
+          excludeShareDeal: query.excludeShareDeal,
+          fromDate: period.fromDate,
+          includeCanceled: query.includeCanceled,
+          limit,
+          north: query.north,
+          south: query.south,
+          toDate: period.toDate,
+          west: query.west,
+        });
+
+        items = rows.map((row) => ({
+          address: buildMapTradeAddress(row.sggCd, row.sggNm, row.umdNm, row.jibun),
+          avgDealAmount: row.avgDealAmount,
+          buildingArea: row.latestBuildingArea,
+          buildingUse: row.buildingUse,
+          dealAmount: row.latestDealAmount,
+          dealDate: row.latestDealDate,
+          floor: row.latestFloor,
+          isCanceled: row.isCanceled,
+          isShareDeal: row.isShareDeal,
+          jibun: row.jibun,
+          key: buildParcelDetailKey(row),
+          lat: row.lat,
+          latestBuildingArea: row.latestBuildingArea,
+          latestDealAmount: row.latestDealAmount,
+          latestDealDate: row.latestDealDate,
+          latestFloor: row.latestFloor,
+          lng: row.lng,
+          medianDealAmount: row.medianDealAmount,
+          sggCd: row.sggCd,
+          tradeCount: row.tradeCount,
+          tradeId: String(row.id),
+          type: 'parcel-detail',
+          umdNm: row.umdNm,
+        }));
+        break;
+      }
+      case 'dong-summary': {
+        const rows = await this.tradesRepository.findDongSummariesInBounds({
+          east: query.east,
+          excludeShareDeal: query.excludeShareDeal,
+          fromDate: period.fromDate,
+          includeCanceled: query.includeCanceled,
+          limit,
+          north: query.north,
+          south: query.south,
+          toDate: period.toDate,
+          west: query.west,
+        });
+
+        items = rows.map((row) => this.buildDongSummaryMapItem(row));
+        break;
+      }
+      case 'district-summary': {
+        const rows = await this.tradesRepository.findDistrictSummariesInBounds({
+          east: query.east,
+          excludeShareDeal: query.excludeShareDeal,
+          fromDate: period.fromDate,
+          includeCanceled: query.includeCanceled,
+          limit,
+          north: query.north,
+          south: query.south,
+          toDate: period.toDate,
+          west: query.west,
+        });
+
+        items = rows.map((row) => this.buildDistrictSummaryMapItem(row));
+        break;
+      }
+      case 'city-summary': {
+        const rows = await this.tradesRepository.findCitySummariesInBounds({
+          east: query.east,
+          excludeShareDeal: query.excludeShareDeal,
+          fromDate: period.fromDate,
+          includeCanceled: query.includeCanceled,
+          limit,
+          north: query.north,
+          south: query.south,
+          toDate: period.toDate,
+          west: query.west,
+        });
+
+        items = rows.map((row) => this.buildCitySummaryMapItem(row));
+        break;
+      }
+    }
+
+    return {
+      bounds: mapBounds,
+      count: items.length,
+      displayMode: query.displayMode,
+      items,
+      limit,
+      ...(query.zoom !== undefined ? { zoom: query.zoom } : {}),
     };
   }
 
@@ -804,6 +1043,48 @@ export class TradesService {
     });
 
     return sortRegionSummaryItems(items);
+  }
+
+  private buildCitySummaryMapItem(row: MapCitySummaryRow): MapCitySummaryItem {
+    return {
+      avgDealAmount: row.avgDealAmount,
+      key: `city:${row.sidoCd}`,
+      lat: row.lat,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      sidoCd: row.sidoCd,
+      sidoName: resolveSidoNameByCode(row.sidoCd) ?? row.sidoCd,
+      tradeCount: row.tradeCount,
+      type: 'city-summary',
+    };
+  }
+
+  private buildDistrictSummaryMapItem(row: MapDistrictSummaryRow): MapDistrictSummaryItem {
+    return {
+      avgDealAmount: row.avgDealAmount,
+      key: `district:${row.sggCd}`,
+      lat: row.lat,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      sggCd: row.sggCd,
+      sggName: row.sggName,
+      tradeCount: row.tradeCount,
+      type: 'district-summary',
+    };
+  }
+
+  private buildDongSummaryMapItem(row: MapDongSummaryRow): MapDongSummaryItem {
+    return {
+      avgDealAmount: row.avgDealAmount,
+      key: `dong:${buildDongKey(row.sggCd, row.umdNm)}`,
+      lat: row.lat,
+      lng: row.lng,
+      medianDealAmount: row.medianDealAmount,
+      sggCd: row.sggCd,
+      tradeCount: row.tradeCount,
+      type: 'dong-summary',
+      umdNm: row.umdNm,
+    };
   }
 
   async getTradeHistory(query: TradeHistoryQuery) {

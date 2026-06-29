@@ -8,6 +8,7 @@ import {
   parseQuery,
   type RequestWithContext,
 } from '@app/api';
+import { mapTradesQuerySchema } from './dto/map-trades.query';
 import { nearbyTradesQuerySchema } from './dto/nearby-trades.query';
 import { tradeHistoryQuerySchema } from './dto/trade-history.query';
 import { tradeSummariesQuerySchema } from './dto/trade-summaries.query';
@@ -39,6 +40,21 @@ export class TradesController {
     const result = await this.tradesService.getTradeHistory(parsedQuery);
 
     return apiSuccess(result, createApiMeta({ requestId: request.requestId ?? 'req_unknown' }));
+  }
+
+  @Get('map')
+  async getMap(@Req() request: RequestWithContext, @Query() query: Record<string, unknown>) {
+    const parsedQuery = parseQuery(mapTradesQuerySchema, query);
+    const result = await this.tradesService.getMapTrades(parsedQuery);
+
+    return apiSuccess(
+      result,
+      createApiMeta({
+        count: result.count,
+        limit: result.limit,
+        requestId: request.requestId ?? 'req_unknown',
+      }),
+    );
   }
 
   @Get('nearby')
